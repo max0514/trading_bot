@@ -1,0 +1,6 @@
+FinMind==1.6.0
+pandas==2.0.0
+python-dotenv==1.0.0  # Assuming you use it to load environment variables from a .env file
+pymongo==4.3.3  # Assuming this is the MongoDB driver you're using
+beautifulsoup4==4.11.2
+requests==2.28.2
