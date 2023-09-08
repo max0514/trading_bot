@@ -5,7 +5,8 @@ FROM python:3.9-slim
 WORKDIR /app/trading_bot
 
 # Copy the entire 'python_codes' folder (or just the 'trading_bot' subfolder) into the container
-COPY python_codes/trading_bot/ /app/trading_bot/
+COPY . /app/trading_bot/
+
 
 # Installing necessary dependencies
 RUN pip install pandas datetime pymongo FinMind python-dotenv
