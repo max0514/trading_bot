@@ -12,4 +12,4 @@ COPY . /app/trading_bot/
 RUN pip install pandas datetime pymongo FinMind python-dotenv beautifulsoup4
 
 # Define default command (can be overridden at runtime)
-CMD ["python", "crawl_stock_price.py"]
+CMD ["python", "crawl_everything.py"]
