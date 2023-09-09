@@ -299,6 +299,35 @@ class month_revenue:
       header = copy.copy(random.choice(random_headers))
       header['User-Agent'] = user_agent
       return header
+  
+
+
+
+#the working part
+# instantiate mongo
+mongo = Mongo('trading_bot','month_revenue')
+#instantiate month_revenue
+m = month_revenue(mongo)
+#get latest data date
+latest = mongo.get_latest_data_date() 
+#get the url need to crawl
+urls,all_time = m.generate_url(latest)
+#get the header fro request
+header = m.generate_random_header()
+print(f'latest data: {latest}')
+for i in range(len(urls)):
+  # get url
+  url = urls[i]
+  #get time
+  time = str(all_time[i])
+  #generate df
+  df = m.crawl_monthly_report(url, time)
+
+  for k in range(df.shape[0]):
+    records = (df.iloc[k]).to_dict()
+    mongo.send_document(records)
+  print(f'sent {time} documents to DB')
+
 
 
 
