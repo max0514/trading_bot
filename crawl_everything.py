@@ -63,17 +63,19 @@ class stock_price_scrapper:
 
                 # If there is data in MongoDB, add new data
                 if not df.empty:
-                    latest_date = (pd.to_datetime(df['Timestamp'].iloc[-1]) + pd.DateOffset(days=1)).strftime('%Y-%m-%d')
+                    current_date = pd.to_datetime(df['Timestamp'].iloc[-1])
                     
-                    if latest_date == today and weekday < 5:
-                        print(f'{stock_id} is up-to-date')
+                    data_start_date = (current_date + pd.DateOffset(days=1)).strftime('%Y-%m-%d')
+                    
+                    if data_start_date == today and weekday < 5:
+                        #print(f'{stock_id} is up-to-date')
                         continue
                     
                     if weekday >= 5:
                         print("It's the weekend! Exiting the script.")
                         return
 
-                    stock_data = dl.taiwan_stock_daily(stock_id=stock_id, start_date=(latest_date))
+                    stock_data = dl.taiwan_stock_daily(stock_id=stock_id, start_date=(data_start_date))
 
                 # If there is no data in the MongoDB, add data from the beginning of 2013
                 else:
@@ -81,7 +83,7 @@ class stock_price_scrapper:
                     stock_data = dl.taiwan_stock_daily(stock_id=stock_id, start_date='2013-01-01')
 
                 self.send_to_repo(stock_data, repo)
-                print(f'Sent {stock_id} to trading_bot stock_price')
+                #print(f'Sent {stock_id} to trading_bot stock_price')
 
             except Exception as e:
                 print(e)
@@ -92,9 +94,9 @@ stock_price_scrapper = stock_price_scrapper()
 stock_price_scrapper.update_data()
 
 
-
+#----------------------------------
 #the monthly_revenue part
-
+#----------------------------------
 
 
 from pymongo import MongoClient

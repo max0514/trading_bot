@@ -41,11 +41,20 @@ class Mongo:
   def get_oldest_data_date(self):
      return self.collection.find_one()['Timestamp']
   
-  def get_latest_data_date(self):
-    try:
-      return self.collection.find_one(sort=[('Timestamp', -1)])['Timestamp']
-    except:
-      return None
+  def get_latest_data_date(self, stock_id=None):
+        # If a stock_id is provided, search specifically for that stock_id
+        if stock_id:
+            query = {'stock_id': stock_id}
+            try:
+                return self.collection.find_one(query, sort=[('Timestamp', -1)])['Timestamp']
+            except:
+                return None
+        else:
+            # Else, return the latest data date without filtering by stock_id
+            try:
+                return self.collection.find_one(sort=[('Timestamp', -1)])['Timestamp']
+            except:
+                return None
   # return a dataframe match the stock_id
   def get_data_by_stock_id(self,stock_id):
     self.stock_id = stock_id
