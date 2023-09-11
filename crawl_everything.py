@@ -79,7 +79,7 @@ class stock_price_scrapper:
 
                 # If there is no data in the MongoDB, add data from the beginning of 2013
                 else:
-                    print(f'Did not find the {stock_id} in the database. Sending data beginning from 2013.')
+                    #print(f'Did not find the {stock_id} in the database. Sending data beginning from 2013.')
                     stock_data = dl.taiwan_stock_daily(stock_id=stock_id, start_date='2013-01-01')
 
                 self.send_to_repo(stock_data, repo)
