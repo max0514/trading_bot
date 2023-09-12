@@ -55,7 +55,8 @@ class stock_price_scrapper:
         # Get the current day and weekday
         today = dt.datetime.now().strftime('%Y-%m-%d')
         weekday = dt.datetime.now().weekday()
-
+        start_time = time.time()
+  
         for stock_id in stock_id_list:
             try:
                 stock_id = str(stock_id)
@@ -88,6 +89,11 @@ class stock_price_scrapper:
             except Exception as e:
                 print(e)
                 print('Wait 1 hour and try again')
+        print('finished')
+        
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f'It takes {execution_time} to finish')
 
 
 stock_price_scrapper = stock_price_scrapper()
