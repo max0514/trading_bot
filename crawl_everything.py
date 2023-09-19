@@ -45,8 +45,11 @@ class stock_price_scrapper:
 
     def send_to_repo(self,df, repo):
         df.rename(columns={'date':'Timestamp'}, inplace=True)
-        for _, row in df.iterrows():
-            repo.send_document(row.to_dict())
+        records = df.to_dict(orient='records')
+        for record in records:
+            repo.send_document(record)
+        # for _, row in df.iterrows():
+        #     repo.send_document(row.to_dict())
 
     def update_data(self):
         repo = Mongo('trading_bot', 'stock_price')
@@ -69,11 +72,11 @@ class stock_price_scrapper:
                     data_start_date = (current_date + pd.DateOffset(days=1)).strftime('%Y-%m-%d')
                     
                     if data_start_date == today and weekday < 5:
-                        #print(f'{stock_id} is up-to-date')
+                        # print(f'{stock_id} is up-to-date')
                         continue
                     
                     if weekday >= 5:
-                        print("It's the weekend! Exiting the script.")
+                        # print("It's the weekend! Exiting the script.")
                         return
 
                     stock_data = dl.taiwan_stock_daily(stock_id=stock_id, start_date=(data_start_date))
@@ -83,27 +86,28 @@ class stock_price_scrapper:
                     #print(f'Did not find the {stock_id} in the database. Sending data beginning from 2013.')
                     stock_data = dl.taiwan_stock_daily(stock_id=stock_id, start_date='2013-01-01')
 
-                self.send_to_repo(stock_data, repo)
-                #print(f'Sent {stock_id} to trading_bot stock_price')
 
-            except Exception as e:
-                print(e)
-                print('Wait 1 hour and try again')
-        print('finished')
+                dfs = pd.concat([df,stock_data])
+                self.send_to_repo(dfs, repo)
+                # print(f'Sent {stock_id} to trading_bot stock_price')
+
+            except:
+               break
+              #print(e)
+              #print('Wait 1 hour and try again')
+        #print('finished')
         
-        end_time = time.time()
-        execution_time = end_time - start_time
-        print(f'It takes {execution_time} to finish')
-
-
-stock_price_scrapper = stock_price_scrapper()
-stock_price_scrapper.update_data()
-
+        # end_time = time.time()
+        # execution_time = end_time - start_time
+        # print(f'It takes {execution_time} to finish')
 
 #----------------------------------
 #the monthly_revenue part
 #----------------------------------
-
+#----------------------------------#----------------------------------#----------------------------------
+#----------------------------------#----------------------------------#----------------------------------
+#----------------------------------#----------------------------------#----------------------------------#----------------------------------
+#----------------------------------#----------------------------------#----------------------------------
 
 from pymongo import MongoClient
 from urllib.parse import quote_plus
@@ -117,7 +121,7 @@ from mongo import Mongo
 from io import StringIO
 import numpy as np
 class month_revenue:
-  def __init__(self,mongo=Mongo) :
+  def __init__(self,mongo=Mongo(db='trading_bot', collection='month_revenue')) :
     self.mongo = mongo
   
   
@@ -406,39 +410,110 @@ class month_revenue:
       header['User-Agent'] = user_agent
       return header
   
+  def update_monthly_revenue(self, stock_code=None):
+        # Get latest data date from MongoDB
+        latest = self.mongo.get_latest_data_date() 
+        print(f'Latest data date: {latest}')
+        
+        # Generate URLs and corresponding time frames for scraping
+        urls, all_time = self.generate_url(latest)
+        header = self.generate_random_header()
+        
+        for url, time in zip(urls, all_time):
+            #print(f"Fetching data for date: {time}")
+            try:
+              df = self.crawl_monthly_report(url, time)
+              
+              # If a specific stock_code is provided, filter the data for that stock
+              if stock_code:
+                  df = df[df['公司代號'] == stock_code]
+              
+              # Convert entire dataframe to list of dictionaries
+              records = df.to_dict('records')
+              
+              # Assuming there's a method in the mongo object to send the records
+              if self.mongo:
+                  for record in records:
+                      self.mongo.send_document(record)
+              
+              #print(f'Sent documents for {time} to DB')
+            except Exception as e:
+               print(e)
+               break
+
+
+
+
+          
+
+
+#   #get latest data date
+# latest = mongo.get_latest_data_date() 
+# #get the url need to crawl
+# urls,all_time = m.generate_url(latest)
+# #get the header fro request
+# header = m.generate_random_header()
+# print(f'latest data: {latest}')
+# for i in range(len(urls)):
+#   # get url
+#   url = urls[i]
+#   #get time
+#   time = str(all_time[i])
+#   #generate df
+#   df = m.crawl_monthly_report(url, time)
+
+#   for k in range(df.shape[0]):
+#     records = (df.iloc[k]).to_dict()
+#     mongo.send_document(records)
+#   print(f'sent {time} documents to DB')
+  
 
 
 
 #the working part
-# instantiate mongo
-mongo = Mongo('trading_bot','month_revenue')
-#instantiate month_revenue
-m = month_revenue(mongo)
-#get latest data date
-latest = mongo.get_latest_data_date() 
-#get the url need to crawl
-urls,all_time = m.generate_url(latest)
-#get the header fro request
-header = m.generate_random_header()
-print(f'latest data: {latest}')
-for i in range(len(urls)):
-  # get url
-  url = urls[i]
-  #get time
-  time = str(all_time[i])
-  #generate df
-  df = m.crawl_monthly_report(url, time)
 
-  for k in range(df.shape[0]):
-    records = (df.iloc[k]).to_dict()
-    mongo.send_document(records)
-  print(f'sent {time} documents to DB')
+stock_price_updater = stock_price_scrapper()
+stock_price_updater.update_data()
+
+month_revenue_updater = month_revenue()
+month_revenue_updater.update_monthly_revenue()
 
 
 
 
 
+# Modifying the lambda_handler based on the simplified JSON trigger
+
+# def lambda_handler(event, context):
+#     # Default response
+#     response = {
+#         'statusCode': 200,
+#         'body': 'Operation completed successfully'
+#     }
+    
+#     try:
+#         # Check for the action in the event
+#         action = event.get('action', None)
+        
+#         if action == 'run_crawl':
+
+#             stock_price_updater = stock_price_scrapper()
+#             stock_price_updater.update_data()
+
+#             month_revenue_updater = month_revenue()
+#             month_revenue_updater.update_monthly_revenue()
 
 
+            
+#             pass
+#         else:
+#             response['statusCode'] = 400
+#             response['body'] = f'Unsupported action: {action}'
+            
+#     except Exception as e:
+#         response['statusCode'] = 500
+#         response['body'] = f'Error occurred: {str(e)}'
+        
+#     return response
 
 
