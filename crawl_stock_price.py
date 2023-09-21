@@ -100,3 +100,13 @@ class stock_price_scrapper:
         # end_time = time.time()
         # execution_time = end_time - start_time
         # print(f'It takes {execution_time} to finish')
+
+
+
+
+
+
+#the working part
+
+stock_price_updater = stock_price_scrapper()
+stock_price_updater.update_data()
