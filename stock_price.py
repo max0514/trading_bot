@@ -2,10 +2,8 @@ import pandas as pd
 import datetime as dt
 from mongo import Mongo
 from FinMind.data import DataLoader
-import sys
 from dotenv import load_dotenv
 import os
-from mongo import Mongo
 def config():
     load_dotenv()
 
@@ -91,7 +89,9 @@ class stock_price_scrapper:
                 self.send_to_repo(dfs, repo)
                 # print(f'Sent {stock_id} to trading_bot stock_price')
 
-            except:
+            except Exception as e:
+               print(f'error in {stock_id}')
+               print(e) 
                break
               #print(e)
               #print('Wait 1 hour and try again')
@@ -110,3 +110,4 @@ class stock_price_scrapper:
 
 stock_price_updater = stock_price_scrapper()
 stock_price_updater.update_data()
+
