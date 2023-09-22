@@ -10,8 +10,7 @@ def config():
 
     
 config()
-stock_id_list = pd.read_csv('上市公司基本資料.csv')['公司代號'].to_list()
-stock_id_list
+stock_id_list = pd.read_csv('company_data.csv')['公司代號'].to_list()
 
 #if life time expired error restart vscode
 repo = Mongo('trading_bot',collection='stock_price')
@@ -29,7 +28,7 @@ import time
 import sys
 
 class stock_price_scrapper:
-    def  __init__(self, stock_id_list= pd.read_csv('上市公司基本資料.csv')['公司代號'].to_list(), repo = Mongo(db='trading_bot',collection='stock_price')):#, config=__config()):
+    def  __init__(self, stock_id_list= stock_id_list, repo = Mongo(db='trading_bot',collection='stock_price')):
         self.stock_id_list = stock_id_list
         self.repo = repo
         #login to finmind
