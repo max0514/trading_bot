@@ -5,7 +5,7 @@ FROM python:3.9-slim
 WORKDIR /app/trading_bot
 
 # Copy the entire  'trading_bot' folder into the container
-COPY company_data.csv mongo.py .env   /app/trading_bot/
+COPY company_data.csv mongo.py .env stock_price.py   /app/trading_bot/
 
 
 # Installing necessary dependencies

@@ -4,6 +4,10 @@ from mongo import Mongo
 from FinMind.data import DataLoader
 from dotenv import load_dotenv
 import os
+import time
+
+
+
 def config():
     load_dotenv()
 
@@ -22,10 +26,6 @@ dl.login_by_token(api_token=os.getenv('FINMIND_API_KEY'))
 dl.login(user_id=os.getenv('FINMIND_USER_ID'),password=os.getenv('FINMIND_PASSWORD'))
 
 
-from FinMind.data import DataLoader
-import datetime as dt
-import time
-import sys
 
 class stock_price_scrapper:
     def  __init__(self, stock_id_list= stock_id_list, repo = Mongo(db='trading_bot',collection='stock_price')):
