@@ -1,11 +1,6 @@
 from pymongo import MongoClient
 from urllib.parse import quote_plus
-import random
-import copy
 import pandas as pd 
-import requests
-from bs4 import BeautifulSoup
-import datetime as dt
 from dotenv import load_dotenv
 import os
 

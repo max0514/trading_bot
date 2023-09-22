@@ -1,12 +1,8 @@
-
-from pymongo import MongoClient
-from urllib.parse import quote_plus
 import random
 import copy
 import pandas as pd 
 import requests
 import datetime as dt
-import os
 from mongo import Mongo
 from io import StringIO
 import numpy as np
