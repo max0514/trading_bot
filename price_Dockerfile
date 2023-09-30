@@ -1,0 +1,15 @@
+# Using an official Python runtime as a parent image
+FROM python:3.9-slim
+
+# Setting the working directory in the container
+WORKDIR /app/trading_bot
+
+# Copy the necessary file into the container
+COPY  mongo.py stock_price.py .env compand_data.csv /app/trading_bot/  
+
+
+# Installing necessary dependencies
+RUN pip install pandas datetime pymongo FinMind load_dotenv time os
+
+# Define default command (can be overridden at runtime)
+CMD ["python", "stock_price.py"]

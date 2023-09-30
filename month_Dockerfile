@@ -4,12 +4,12 @@ FROM python:3.9-slim
 # Setting the working directory in the container
 WORKDIR /app/trading_bot
 
-# Copy the entire  'trading_bot' folder into the container
-COPY company_data.csv mongo.py .env stock_price.py   /app/trading_bot/
+# Copy the necessary file into the container
+COPY  mongo.py monthly_revenue.py .env compand_data.csv /app/trading_bot/  
 
 
 # Installing necessary dependencies
-RUN pip install pandas datetime pymongo FinMind python-dotenv 
+RUN pip install pandas datetime pymongo random copy requests StringIO numpy
 
 # Define default command (can be overridden at runtime)
-CMD ["python", "stock_price.py"]
+CMD ["python", "monthly_revenue.py"]
