@@ -132,19 +132,23 @@ class AllFinancialStatementsScraper:
                 response = requests.get(url, headers=headers)
                 response.encoding='big5'
                 tables = pd.read_html(StringIO(response.text))
-
-                if year >= 2019:
-                    
-                    balance_sheet_df = tables[1]
-                    Incomestatement_df = tables[2]
-                    cash_flow_df = tables[3]
-                else:
-                    # print(len(tables))
-                    # print(tables)
-                    balance_sheet_df = tables[0]
-                    Incomestatement_df = tables[1]
-                    cash_flow_df = tables[2]
-                #print(tables[2])
+                try:
+                    if year >= 2019:
+                        
+                        balance_sheet_df = tables[1]
+                        Incomestatement_df = tables[2]
+                        cash_flow_df = tables[3]
+                    else:
+                        balance_sheet_df = tables[0]
+                        Incomestatement_df = tables[1]
+                        cash_flow_df = tables[2]
+                except Exception as e:
+                    something_wrong = True
+                    print(f'於{year}Q{season}發生【錯誤1】:若於出現則自動休眠(16s)再重跑')
+                    print('get error')
+                    print(f'於{year}Q{season}發生{e}')
+                    self.max_retries+=1
+                    time.sleep(16)
             except:
                 try:
                     C_or_A = 'A'
@@ -156,26 +160,16 @@ class AllFinancialStatementsScraper:
                         balance_sheet_df = tables[1]
                         Incomestatement_df = tables[2]
                         cash_flow_df = tables[3]
-
-                        # #use pd to read the table
-                        # Incomestatement_df = pd.read_html(str(Incomestatement_table))[0]
-                        # balance_sheet_df = pd.read_html(str(balance_sheet_table))[0]
-                        # cash_flow_df = pd.read_html(str(cash_flow_table))[0]
                     else:
-                        # print(len(tables))
-                        # print(tables)
+
                         balance_sheet_df = tables[0]
                         Incomestatement_df = tables[1]
                         cash_flow_df = tables[2]
-
-                        # #use pd to read the table
-                        # Incomestatement_df = pd.read_html(str(Incomestatement_table))[0]
-                        # balance_sheet_df = pd.read_html(str(balance_sheet_table))[0]
-                        # cash_flow_df = pd.read_html(str(cash_flow_table))[0]
                     
                 except Exception as e:
                     something_wrong = True
                     print(f'於{year}Q{season}發生【錯誤1】:若於出現則自動休眠(16s)再重跑')
+                    print('post error')
                     print(f'於{year}Q{season}發生{e}')
                     self.max_retries+=1
                     time.sleep(16)
@@ -187,10 +181,10 @@ class AllFinancialStatementsScraper:
                     try:
                         #Incomestatement_df = pd.read_html(str(Incomestatement_table))[0]
                         if year >= 2019:
-                            Incomestatement_data_dict = self.process_Incomestatement_df_after_2019(Incomestatement_df,year=year,season=season)
+                            Incomestatement_data_dict = self.process_df_after_2019(Incomestatement_df,year=year,season=season)
 
                         else:
-                            Incomestatement_data_dict = self.process_Incomestatement_df_before_2019(Incomestatement_df,year=year,season=season)
+                            Incomestatement_data_dict = self.process_df_before_2019(Incomestatement_df,year=year,season=season)
                         self.income_statements_dfs.append(Incomestatement_data_dict)
                         #self.dfs.append(df)
                         print('stock:' + str(self.stock_id), 'period:' + str(year), 'Q' + str(season), 'finished')
@@ -205,10 +199,10 @@ class AllFinancialStatementsScraper:
                     try:
                         #balance_sheet_df = pd.read_html(str(balance_sheet_table))[0]
                         if year >= 2019:
-                            balance_sheet_data_dict = self.process_balance_sheet_df_after_2019(balance_sheet_df, year=year, season=season)
+                            balance_sheet_data_dict = self.process_df_after_2019(balance_sheet_df, year=year, season=season)
                             #print(balance_sheet_data_dict)
                         else:
-                            balance_sheet_data_dict = self.process_balance_sheet_df_before_2019(balance_sheet_df, year=year, season=season)
+                            balance_sheet_data_dict = self.process_df_before_2019(balance_sheet_df, year=year, season=season)
                             #print(balance_sheet_data_dict)
 
                         self.balance_sheet_dfs.append(balance_sheet_data_dict)
@@ -224,9 +218,9 @@ class AllFinancialStatementsScraper:
                     try:
                         #cash_flow_df = pd.read_html(str(cash_flow_table))[0]
                         if year >= 2019:
-                            cash_flow_data_dict = self.process_cash_flow_df_after_2019(cash_flow_df, year=year, season=season)
+                            cash_flow_data_dict = self.process_df_after_2019(cash_flow_df, year=year, season=season)
                         else:
-                            cash_flow_data_dict = self.process_cash_flow_df_before_2019(cash_flow_df, year=year, season=season)
+                            cash_flow_data_dict = self.process_df_before_2019(cash_flow_df, year=year, season=season)
 
                         self.cash_flow_dfs.append(cash_flow_data_dict)
                         print('stock:' + str(self.stock_id), 'period:' + str(year), 'Q' + str(season), 'Cash Flow finished')
@@ -242,9 +236,9 @@ class AllFinancialStatementsScraper:
                         #Incomestatement_df = pd.read_html(str(Incomestatement_table))[0]
                         #income_statement_info_1season = [year, season, df]
                         if year >= 2019:
-                            Incomestatement_data_dict = self.process_Incomestatement_df_after_2019(Incomestatement_df,year=year,season=season)
+                            Incomestatement_data_dict = self.process_df_after_2019(Incomestatement_df,year=year,season=season)
                         else:
-                            Incomestatement_data_dict = self.process_Incomestatement_df_before_2019(Incomestatement_df,year=year,season=season)
+                            Incomestatement_data_dict = self.process_df_before_2019(Incomestatement_df,year=year,season=season)
 
                         self.income_statements_dfs.append(Incomestatement_data_dict)
                         #self.dfs.append(df)
@@ -259,9 +253,9 @@ class AllFinancialStatementsScraper:
                     try:
                         #balance_sheet_df = pd.read_html(str(balance_sheet_table))[0]
                         if year >= 2019:
-                            balance_sheet_data_dict = self.process_balance_sheet_df_after_2019(balance_sheet_df, year=year, season=season)
+                            balance_sheet_data_dict = self.process_df_after_2019(balance_sheet_df, year=year, season=season)
                         else:
-                            balance_sheet_data_dict = self.process_balance_sheet_df_before_2019(balance_sheet_df, year=year, season=season)
+                            balance_sheet_data_dict = self.process_df_before_2019(balance_sheet_df, year=year, season=season)
 
                         self.balance_sheet_dfs.append(balance_sheet_data_dict)
                         print('stock:' + str(self.stock_id), 'period:' + str(year), 'Q' + str(season), 'Balance Sheet finished')
@@ -275,9 +269,9 @@ class AllFinancialStatementsScraper:
                     try:
                         #cash_flow_df = pd.read_html(str(cash_flow_table))[0]
                         if year >= 2019:
-                            cash_flow_data_dict = self.process_cash_flow_df_after_2019(cash_flow_df, year=year, season=season)
+                            cash_flow_data_dict = self.process_df_after_2019(cash_flow_df, year=year, season=season)
                         else:
-                            cash_flow_data_dict = self.process_cash_flow_df_before_2019(cash_flow_df, year=year, season=season)
+                            cash_flow_data_dict = self.process_df_before_2019(cash_flow_df, year=year, season=season)
 
                         self.cash_flow_dfs.append(cash_flow_data_dict)
                         print('stock:' + str(self.stock_id), 'period:' + str(year), 'Q' + str(season), 'Cash Flow finished')
@@ -292,30 +286,8 @@ class AllFinancialStatementsScraper:
             if something_wrong == False:
                 break
     
-    def process_Incomestatement_df_before_2019(self,df,year,season):
-        # data = df.transpose()
-        # data.reset_index(inplace=True)
-        # season_data = data.iloc[1]
-
-        # index_to_terms_dict = {index: term for index, term in enumerate(season_data)}
-        # index_to_terms_dict
-
-        # return index_to_terms_dict
-        index = df.iloc[:,0]
-        values = df.iloc[:,1]
-        #values
-        data = pd.Series(values.values, index=index.values)
-        data.dropna(inplace=True)
-
-        # Create a new row to append as a Series
-        new_row = pd.Series([f'{self.stock_id}',f'{year}Q{season}'], index=['stock_id','Timestamp'])
-
-        # Append the new row to the original Series at the top
-        updated_series = pd.concat([new_row, data])
-
-        dict_data = updated_series.to_dict()
-        return dict_data
-    def process_Incomestatement_df_after_2019(self, df,year,season):
+      
+    def process_df_after_2019(self, df,year,season):
         # data = df.transpose()
         # data.reset_index(inplace=True)
         # season_data = data.iloc[2]
@@ -335,10 +307,8 @@ class AllFinancialStatementsScraper:
         updated_series = pd.concat([new_row, data])
 
         dict_data = updated_series.to_dict()
-        return dict_data
-
-        #return index_to_terms_dict
-    def process_balance_sheet_df_before_2019(self, df, year, season):
+        return dict_data  
+    def process_df_before_2019(self, df, year, season):
         index = df.iloc[:,0]
         values = df.iloc[:,1]
         #values
@@ -353,89 +323,6 @@ class AllFinancialStatementsScraper:
 
         dict_data = updated_series.to_dict()
         return dict_data
-
-    def process_balance_sheet_df_after_2019(self, df, year, season):
-        # # Placeholder implementation
-
-        # data = df.reset_index()
-        # season_data = data.iloc[:,3]
-        # season_data.iloc[0] = f'{year}Q{season}'
-        # index_to_terms_dict = {index: term for index, term in enumerate(season_data)}
-        # return index_to_terms_dict
-        index = df.iloc[:,1]
-        values = df.iloc[:,2]
-        #values
-        data = pd.Series(values.values, index=index.values)
-        data.dropna(inplace=True)
-
-        # Create a new row to append as a Series
-        new_row = pd.Series([f'{self.stock_id}',f'{year}Q{season}'], index=['stock_id','Timestamp'])
-
-        # Append the new row to the original Series at the top
-        updated_series = pd.concat([new_row, data])
-
-        dict_data = updated_series.to_dict()
-        return dict_data
-
-    def process_cash_flow_df_before_2019(self, df, year, season):
-        # # Implement data frame processing similar to the income statement
-        # # Placeholder implementation:
-        # index = df.iloc[:,0]
-        # values = df.iloc[:,1]
-        # values
-        # data = pd.Series(values.values, index=index.values)
-        # data.to_dict()
-        # season_data = data.iloc[:,3]
-        # if season==1:
-        #     season_data[0] = f'{year}Q1'
-        # elif season ==4:
-        #     season_data[0] = f'entire_{year}'
-        # else:
-        #     season_data[0] = f'{year}Q1-{year}Q{season}'
-        # index_to_terms_dict = {index: term for index, term in enumerate(season_data)}
-        # return index_to_terms_dict
-        index = df.iloc[:,0]
-        values = df.iloc[:,1]
-        #values
-        data = pd.Series(values.values, index=index.values)
-        data.dropna(inplace=True)
-
-        # Create a new row to append as a Series
-        new_row = pd.Series([f'{self.stock_id}',f'{year}Q{season}'], index=['stock_id','Timestamp'])
-
-        # Append the new row to the original Series at the top
-        updated_series = pd.concat([new_row, data])
-
-        dict_data = updated_series.to_dict()
-        return dict_data
-
-    def process_cash_flow_df_after_2019(self, df, year, season):
-        # # Placeholder implementation
-        # data = df.reset_index()
-        # season_data = data.iloc[:,3]
-        # if season==1:
-        #     season_data[0] = f'{year}Q1'
-        # elif season ==4:
-        #     season_data[0] = f'entire_{year}'
-        # else:
-        #     season_data[0] = f'{year}Q1-{year}Q{season}'
-        # index_to_terms_dict = {index: term for index, term in enumerate(season_data)}
-        # return index_to_terms_dict             
-        index = df.iloc[:,1]
-        values = df.iloc[:,2]
-        #values
-        data = pd.Series(values.values, index=index.values)
-        data.dropna(inplace=True)
-
-        # Create a new row to append as a Series
-        new_row = pd.Series([f'{self.stock_id}',f'{year}Q{season}'], index=['stock_id','Timestamp'])
-
-        # Append the new row to the original Series at the top
-        updated_series = pd.concat([new_row, data])
-
-        dict_data = updated_series.to_dict()
-        return dict_data    
-
 
 
 
@@ -452,22 +339,32 @@ def update_financial_statements():
     repo = Mongo(db='trading_bot', collection='balance_sheet')
     stock_id_list = repo.get_stock_id_list()
     for stock_id in stock_id_list:
+        print(f'working on {stock_id}')
         try:
-            Timestamp = repo.get_latest_data_date(stock_id=stock_id)
-            current_year = int(Timestamp[:4])
-            current_season = int(Timestamp[-1])
-
+            #the stock
+            Timestamp = repo.get_latest_data_date(stock_id=str(stock_id))
+            if Timestamp != None:
+                #don't mess up season and year max!!!!!
+                current_season = int(Timestamp[-1])
+                current_year = int(Timestamp[:4])
+                print(Timestamp)
             if Timestamp == None:
                 scraper = AllFinancialStatementsScraper()
                 pass
-            #if latest season =4 jump to next year
+            #if current season =4 jump to next year
             elif current_season == 4:
                 scraper = AllFinancialStatementsScraper(start_year=current_year+1, start_season=1)
             else:
+
                 scraper = AllFinancialStatementsScraper(start_year=current_year, start_season=current_season+1)
 
 
             balance_sheets, income_sheets, cash_flows= scraper.get_all_statements_hst(stock_id=stock_id)
+            if balance_sheets == None:
+                print(f'stock_id:{stock_id} to up to date')
+                break
+
+
             for i in range(len(balance_sheets)):
                 try:
 

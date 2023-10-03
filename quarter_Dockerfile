@@ -9,7 +9,7 @@ COPY  mongo.py quarter_report.py   /app/trading_bot/
 
 
 # Installing necessary dependencies
-RUN pip install pandas datetime pymongo random time StringIO requests
+RUN pip install pandas pymongo requests dotenv
 
 
 # Define default command (can be overridden at runtime)
