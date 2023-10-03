@@ -9,7 +9,7 @@ COPY  mongo.py monthly_revenue.py .env compand_data.csv /app/trading_bot/
 
 
 # Installing necessary dependencies
-RUN pip install pandas datetime pymongo random copy requests StringIO numpy
-
+RUN pip3 install --upgrade pip
+RUN pip3 install pandas datetime pymongo load_dotenv
 # Define default command (can be overridden at runtime)
 CMD ["python", "monthly_revenue.py"]

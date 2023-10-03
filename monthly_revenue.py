@@ -13,7 +13,7 @@ class month_revenue:
   
   def generate_url(self,latest):
     if latest==None:
-      latest=pd.Timestamp(2012,1,1)
+      latest=pd.Timestamp(2013,1,1)
     else:
       latest = pd.Timestamp(self.mongo.get_latest_data_date())
    #find the date range of data

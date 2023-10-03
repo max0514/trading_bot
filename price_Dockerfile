@@ -9,7 +9,16 @@ COPY  mongo.py stock_price.py .env compand_data.csv /app/trading_bot/
 
 
 # Installing necessary dependencies
-RUN pip install pandas datetime pymongo FinMind load_dotenv time os
+RUN pip3 install --upgrade pip
+RUN pip3 install pandas datetime pymongo FinMind load_dotenv
 
 # Define default command (can be overridden at runtime)
 CMD ["python", "stock_price.py"]
+
+
+
+
+#the bulid command for this
+
+#docker buildx build -t quarter_report --file /Users/maxlien/Desktop/python_codes/trading_bot/quarter_Dockerfile   /Users/maxlien/Desktop/python_codes/trading_bot/
+

@@ -5,11 +5,14 @@ FROM python:3.9-slim
 WORKDIR /app/trading_bot
 
 # Copy the necessary file into the container
-COPY  mongo.py quarter_report.py   /app/trading_bot/
+COPY  mongo.py quarter_report.py .env   /app/trading_bot/
 
 
 # Installing necessary dependencies
-RUN pip install pandas pymongo requests dotenv
+RUN pip3 install --upgrade pip
+RUN pip3 install pandas==2.1.1 pymongo==4.5.0 requests==2.31.0
+
+RUN pip3 install python-dotenv lxml
 
 
 # Define default command (can be overridden at runtime)

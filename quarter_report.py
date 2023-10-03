@@ -133,15 +133,20 @@ class AllFinancialStatementsScraper:
                 response.encoding='big5'
                 tables = pd.read_html(StringIO(response.text))
                 try:
+                    #資產負債表= balance_sheet
+                    #綜合損益表 = income_statement
+                    #現金流量表 = cash_flow
+                    # >=2019 balance_sheet = dfs[0]
+                    #<2019 balance_sheet = dfs[1]
                     if year >= 2019:
                         
-                        balance_sheet_df = tables[1]
-                        Incomestatement_df = tables[2]
-                        cash_flow_df = tables[3]
-                    else:
                         balance_sheet_df = tables[0]
                         Incomestatement_df = tables[1]
                         cash_flow_df = tables[2]
+                    else:
+                        balance_sheet_df = tables[1]
+                        Incomestatement_df = tables[2]
+                        cash_flow_df = tables[3]
                 except Exception as e:
                     something_wrong = True
                     print(f'於{year}Q{season}發生【錯誤1】:若於出現則自動休眠(16s)再重跑')
@@ -157,14 +162,14 @@ class AllFinancialStatementsScraper:
                     tables = pd.read_html(StringIO(res.text))
                     if year >= 2019:
                         
-                        balance_sheet_df = tables[1]
-                        Incomestatement_df = tables[2]
-                        cash_flow_df = tables[3]
-                    else:
-
                         balance_sheet_df = tables[0]
                         Incomestatement_df = tables[1]
                         cash_flow_df = tables[2]
+                    else:
+
+                        balance_sheet_df = tables[1]
+                        Incomestatement_df = tables[2]
+                        cash_flow_df = tables[3]
                     
                 except Exception as e:
                     something_wrong = True
