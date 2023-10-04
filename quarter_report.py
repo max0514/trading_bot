@@ -341,7 +341,14 @@ class AllFinancialStatementsScraper:
 #     balance_sheet, income_sheet, cash_flow = IS_scraper.get_all_statements_hst(2337) # 3372 is a good example showing 2 kind of 財報（合併 or 個別）
     
 def update_financial_statements():
-    repo = Mongo(db='trading_bot', collection='balance_sheet')
+    try:
+
+        repo = Mongo(db='trading_bot', collection='balance_sheet')
+    except:
+        print('retry in five second')
+        time.sleep(5)
+        repo = Mongo(db='trading_bot', collection='balance_sheet')
+
     stock_id_list = repo.get_stock_id_list()
     for stock_id in stock_id_list:
         print(f'working on {stock_id}')
