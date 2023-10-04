@@ -350,45 +350,51 @@ def update_financial_statements():
         repo = Mongo(db='trading_bot', collection='balance_sheet')
 
     stock_id_list = repo.get_stock_id_list()
-    for stock_id in stock_id_list:
-        print(f'working on {stock_id}')
-        try:
-            #the stock
-            Timestamp = repo.get_latest_data_date(stock_id=str(stock_id))
-            if Timestamp != None:
-                #don't mess up season and year max!!!!!
-                current_season = int(Timestamp[-1])
-                current_year = int(Timestamp[:4])
-                print(Timestamp)
-            if Timestamp == None:
-                scraper = AllFinancialStatementsScraper()
-                pass
-            #if current season =4 jump to next year
-            elif current_season == 4:
-                scraper = AllFinancialStatementsScraper(start_year=current_year+1, start_season=1)
-            else:
+    retires = 0
+    while retires <3:
+        for stock_id in stock_id_list:
+            print(f'working on {stock_id}')
+            try:
+                #the stock
+                Timestamp = repo.get_latest_data_date(stock_id=str(stock_id))
+                if Timestamp != None:
+                    #don't mess up season and year max!!!!!
+                    current_season = int(Timestamp[-1])
+                    current_year = int(Timestamp[:4])
+                    print(Timestamp)
+                if Timestamp == None:
+                    scraper = AllFinancialStatementsScraper()
+                    pass
+                #if current season =4 jump to next year
+                elif current_season == 4:
+                    scraper = AllFinancialStatementsScraper(start_year=current_year+1, start_season=1)
+                else:
 
-                scraper = AllFinancialStatementsScraper(start_year=current_year, start_season=current_season+1)
-
-
-            balance_sheets, income_sheets, cash_flows= scraper.get_all_statements_hst(stock_id=stock_id)
-            if balance_sheets == None:
-                print(f'stock_id:{stock_id} to up to date')
-                break
+                    scraper = AllFinancialStatementsScraper(start_year=current_year, start_season=current_season+1)
 
 
-            for i in range(len(balance_sheets)):
-                try:
+                balance_sheets, income_sheets, cash_flows= scraper.get_all_statements_hst(stock_id=stock_id)
+                if balance_sheets == None:
+                    print(f'stock_id:{stock_id} to up to date')
+                    break
 
-                    scraper.balance_sheet_repo.send_document(balance_sheets[i])
-                    scraper.income_sheet_repo.send_document(income_sheets[i])
-                    scraper.cash_flow_repo.send_document(cash_flows[i])
-                except Exception as e:
-                    print(f'stock_id:{stock_id} sending error')
-                    print(e)
-            print(f'{stock_id} is finished')
-        except Exception as e:
-            print(f'error at stock_id {stock_id}:')
-            print(e)
+
+                for i in range(len(balance_sheets)):
+                    try:
+
+                        scraper.balance_sheet_repo.send_document(balance_sheets[i])
+                        scraper.income_sheet_repo.send_document(income_sheets[i])
+                        scraper.cash_flow_repo.send_document(cash_flows[i])
+                    except Exception as e:
+                        print(f'stock_id:{stock_id} sending error')
+                        print(e)
+                        retires+=1
+                print(f'{stock_id} is finished')
+            except Exception as e:
+                print(f'error at stock_id {stock_id}:')
+                print(e)
+                print('wait a min and try again')
+                time.sleep(60)
+                retires+=1
 if __name__ == '__main__': 
    update_financial_statements()
