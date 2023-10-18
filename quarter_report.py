@@ -284,7 +284,7 @@ class AllFinancialStatementsScraper:
                         something_wrong = True
                         print(f'Cash Flow: Error in {year}Q{season}')
                         self.max_retries+=1
-                        time.sleep(16)
+                        time.sleep(5)
 
             time.sleep(random.uniform(0.5, 1.5))
 
