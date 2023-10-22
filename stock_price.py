@@ -14,10 +14,10 @@ def config():
 
     
 config()
-stock_id_list = pd.read_csv('company_data.csv')['公司代號'].to_list()
 
 #if life time expired error restart vscode
 repo = Mongo('trading_bot',collection='stock_price')
+stock_id_list = repo.get_stock_id_list()
 
 
 
@@ -92,6 +92,8 @@ class stock_price_scrapper:
                print(f'error in {stock_id}')
                print(e) 
                break
+            
+        print('finished')
               #print(e)
               #print('Wait 1 hour and try again')
         #print('finished')
