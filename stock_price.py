@@ -57,10 +57,10 @@ class stock_price_scrapper:
         weekday = dt.datetime.now().weekday()
         start_time = time.time()
   
-        for stock_id in stock_id_list:
+        for stock_id in self.stock_id_list:
             try:
                 stock_id = str(stock_id)
-                df = repo.get_data_by_stock_id(str(stock_id))
+                df = self.repo.get_data_by_stock_id(str(stock_id))
 
                 # If there is data in MongoDB, add new data
                 if not df.empty:
@@ -69,14 +69,14 @@ class stock_price_scrapper:
                     data_start_date = (current_date + pd.DateOffset(days=1)).strftime('%Y-%m-%d')
                     
                     if data_start_date == today and weekday < 5:
-                        # print(f'{stock_id} is up-to-date')
+                        print(f'{stock_id} is up-to-date')
                         continue
                     
                     if weekday >= 5:
-                        # print("It's the weekend! Exiting the script.")
+                        print("It's the weekend! Exiting the script.")
                         return
 
-                    stock_data = dl.taiwan_stock_daily(stock_id=stock_id, start_date=(data_start_date))
+                    stock_data = self.dl.taiwan_stock_daily(stock_id=stock_id, start_date=(data_start_date))
 
                 # If there is no data in the MongoDB, add data from the beginning of 2013
                 else:
@@ -109,6 +109,6 @@ class stock_price_scrapper:
 
 #the working part
 
-stock_price_updater = stock_price_scrapper()
+stock_price_updater = stock_price_scrapper(stock_id_list=stock_id_list)
 stock_price_updater.update_data()
 
