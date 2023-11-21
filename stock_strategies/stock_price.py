@@ -1,6 +1,6 @@
 import pandas as pd
 import datetime as dt
-from mongo import Mongo
+from scraper_in_pys.mongo import Mongo
 from FinMind.data import DataLoader
 from dotenv import load_dotenv
 import os

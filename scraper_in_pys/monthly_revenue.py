@@ -3,7 +3,7 @@ import copy
 import pandas as pd 
 import requests
 import datetime as dt
-from mongo import Mongo
+from scraper_in_pys.mongo import Mongo
 from io import StringIO
 import numpy as np
 class month_revenue:

@@ -8,7 +8,7 @@ import requests
 import pandas as pd
 pd.options.mode.chained_assignment = None
 from io import StringIO
-from mongo import Mongo
+from scraper_in_pys.mongo import Mongo
 
 
 class AllFinancialStatementsScraper:

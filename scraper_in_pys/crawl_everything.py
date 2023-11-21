@@ -1,11 +1,11 @@
 import pandas as pd
 import datetime as dt
-from mongo import Mongo
+from scraper_in_pys.mongo import Mongo
 from FinMind.data import DataLoader
 import sys
 from dotenv import load_dotenv
 import os
-from mongo import Mongo
+from scraper_in_pys.mongo import Mongo
 def config():
     load_dotenv()
 
@@ -117,7 +117,7 @@ import pandas as pd
 import requests
 import datetime as dt
 import os
-from mongo import Mongo
+from scraper_in_pys.mongo import Mongo
 from io import StringIO
 import numpy as np
 class month_revenue:
