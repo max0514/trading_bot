@@ -1,0 +1,20 @@
+import finlab
+from finlab import data
+import pandas as pd
+import datetime as dt
+import numpy as np
+import math
+from dotenv import load_dotenv
+import os
+import time
+from finlab.backtest import sim
+import scipy.stats as stats
+
+def config():
+    load_dotenv()
+
+
+    
+config()
+
+finlab.login(str(os.getenv('FINLAB_API')))
