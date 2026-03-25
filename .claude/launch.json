@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "Trading Bot Dashboard",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["run_dashboard.py"],
+      "port": 8050
+    },
+    {
       "name": "Polymarket Bot (simulate, single run)",
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "src.main", "--once", "--simulate"],

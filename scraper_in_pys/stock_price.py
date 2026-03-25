@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 import datetime as dt
 from scraper_in_pys.mongo import Mongo
@@ -6,109 +7,79 @@ from dotenv import load_dotenv
 import os
 import time
 
+load_dotenv()
+logger = logging.getLogger(__name__)
 
 
-def config():
-    load_dotenv()
+class StockPriceScraper:
+    """Fetches daily stock prices from FinMind and stores them in MongoDB."""
 
-
-    
-config()
-
-#if life time expired error restart vscode
-repo = Mongo('trading_bot',collection='stock_price')
-stock_id_list = repo.get_stock_id_list()
-
-
-
-dl = DataLoader()
-dl.login_by_token(api_token=os.getenv('FINMIND_API_KEY'))
-dl.login(user_id=os.getenv('FINMIND_USER_ID'),password=os.getenv('FINMIND_PASSWORD'))
-
-
-
-class stock_price_scrapper:
-    def  __init__(self, stock_id_list= stock_id_list, repo = Mongo(db='trading_bot',collection='stock_price')):
-        self.stock_id_list = stock_id_list
-        self.repo = repo
-        #login to finmind
+    def __init__(self, stock_id_list=None):
+        self.repo = Mongo(db='trading_bot', collection='stock_price')
+        self.stock_id_list = stock_id_list or self.repo.get_stock_id_list()
         self.dl = DataLoader()
         self.dl.login_by_token(api_token=os.getenv('FINMIND_API_KEY'))
-        self.dl.login(user_id=os.getenv('FINMIND_USER_ID'),password=os.getenv('FINMIND_PASSWORD'))
+        self.dl.login(
+            user_id=os.getenv('FINMIND_USER_ID'),
+            password=os.getenv('FINMIND_PASSWORD'),
+        )
+        self._status = {"total": len(self.stock_id_list), "done": 0, "errors": 0, "running": False}
 
-    #     self.__config = config
-    #     self.dl.login_by_token(api_token=self.__config.FINMIND_API_KEY)
-    #     self.dl.login(user_id=self.__config.FINMIND_USER_ID,password=self.__config.FINMIND_PASSWORD
+    @property
+    def status(self):
+        return dict(self._status)
 
-    def send_to_repo(self,df, repo):
-        df.rename(columns={'date':'Timestamp'}, inplace=True)
-        records = df.to_dict(orient='records')
-        for record in records:
-            repo.send_document(record)
-        # for _, row in df.iterrows():
-        #     repo.send_document(row.to_dict())
+    def update_data(self, progress_callback=None):
+        """Incrementally update stock prices for all tracked stocks."""
+        self._status["running"] = True
+        self._status["done"] = 0
+        self._status["errors"] = 0
 
-    def update_data(self):
-        repo = Mongo('trading_bot', 'stock_price')
-        
-        print('sending started')
-        # Get the current day and weekday
         today = dt.datetime.now().strftime('%Y-%m-%d')
         weekday = dt.datetime.now().weekday()
-        start_time = time.time()
-  
-        for stock_id in self.stock_id_list:
+
+        if weekday >= 5:
+            logger.info("Weekend — skipping stock price update.")
+            self._status["running"] = False
+            return
+
+        for i, stock_id in enumerate(self.stock_id_list):
+            stock_id = str(stock_id)
             try:
-                stock_id = str(stock_id)
-                df = self.repo.get_data_by_stock_id(str(stock_id))
+                latest = self.repo.get_latest_data_date(stock_id=stock_id)
 
-                # If there is data in MongoDB, add new data
-                if not df.empty:
-                    current_date = pd.to_datetime(df['Timestamp'].iloc[-1])
-                    
-                    data_start_date = (current_date + pd.DateOffset(days=1)).strftime('%Y-%m-%d')
-                    
-                    if data_start_date == today and weekday < 5:
-                        print(f'{stock_id} is up-to-date')
+                if latest:
+                    start = (pd.to_datetime(latest) + pd.DateOffset(days=1)).strftime('%Y-%m-%d')
+                    if start >= today:
+                        logger.debug(f"{stock_id} is up-to-date")
+                        self._status["done"] += 1
                         continue
-                    
-                    if weekday >= 5:
-                        print("It's the weekend! Exiting the script.")
-                        return
-
-                    stock_data = self.dl.taiwan_stock_daily(stock_id=stock_id, start_date=(data_start_date))
-
-                # If there is no data in the MongoDB, add data from the beginning of 2013
                 else:
-                    #print(f'Did not find the {stock_id} in the database. Sending data beginning from 2013.')
-                    stock_data = dl.taiwan_stock_daily(stock_id=stock_id, start_date='2013-01-01')
+                    start = '2013-01-01'
 
+                df = self.dl.taiwan_stock_daily(stock_id=stock_id, start_date=start)
+                if df.empty:
+                    self._status["done"] += 1
+                    continue
 
-                dfs = pd.concat([df,stock_data])
-                self.send_to_repo(dfs, repo)
-                # print(f'Sent {stock_id} to trading_bot stock_price')
+                df.rename(columns={'date': 'Timestamp'}, inplace=True)
+                records = df.to_dict(orient='records')
+                self.repo.upsert_documents(records, key_fields=['stock_id', 'Timestamp'])
+                self._status["done"] += 1
+                logger.info(f"[{i+1}/{len(self.stock_id_list)}] {stock_id}: +{len(records)} rows")
 
             except Exception as e:
-               print(f'error in {stock_id}')
-               print(e) 
-               break
-            
-        print('finished')
-              #print(e)
-              #print('Wait 1 hour and try again')
-        #print('finished')
-        
-        # end_time = time.time()
-        # execution_time = end_time - start_time
-        # print(f'It takes {execution_time} to finish')
+                self._status["errors"] += 1
+                logger.error(f"Error updating {stock_id}: {e}")
+
+            if progress_callback:
+                progress_callback(self._status)
+
+        self._status["running"] = False
+        logger.info(f"Stock price update complete. {self._status['done']} done, {self._status['errors']} errors.")
 
 
-
-
-
-
-#the working part
-
-stock_price_updater = stock_price_scrapper(stock_id_list=stock_id_list)
-stock_price_updater.update_data()
-
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    scraper = StockPriceScraper()
+    scraper.update_data()
