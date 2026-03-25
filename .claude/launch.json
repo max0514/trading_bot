@@ -6,6 +6,54 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["run_dashboard.py"],
       "port": 8050
+    },
+    {
+      "name": "Polymarket Bot (simulate, single run)",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "src.main", "--once", "--simulate"],
+      "port": 0
+    },
+    {
+      "name": "Polymarket Bot (scheduled, 4hr loop)",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "src.main", "--simulate"],
+      "port": 0
+    },
+    {
+      "name": "Pytest Suite",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "pytest", "tests/", "-v"],
+      "port": 0
+    },
+    {
+      "name": "Jupyter Notebook Server",
+      "runtimeExecutable": "jupyter",
+      "runtimeArgs": ["notebook", "--port=8888"],
+      "port": 8888
+    },
+    {
+      "name": "Stock Price Scraper",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scraper_in_pys/stock_price.py"],
+      "port": 0
+    },
+    {
+      "name": "Monthly Revenue Scraper",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scraper_in_pys/monthly_revenue.py"],
+      "port": 0
+    },
+    {
+      "name": "Quarter Report Scraper",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scraper_in_pys/quarter_report.py"],
+      "port": 0
+    },
+    {
+      "name": "Crawl Everything",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scraper_in_pys/crawl_everything.py"],
+      "port": 0
     }
   ]
 }
