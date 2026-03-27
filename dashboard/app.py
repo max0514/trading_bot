@@ -11,10 +11,13 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+import numpy as np
 from datetime import datetime
 
 from scraper_in_pys.mongo import Mongo
 from scraper_in_pys.scraper_manager import ScraperManager
+from strategies import STRATEGY_REGISTRY
+from strategies.backtest import Backtester
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -81,6 +84,7 @@ app.layout = dbc.Container([
                 dbc.NavItem(dbc.NavLink('Monitor', href='#', active=True, id='nav-monitor')),
                 dbc.NavItem(dbc.NavLink('Data Explorer', href='#', id='nav-data')),
                 dbc.NavItem(dbc.NavLink('News & Sentiment', href='#', id='nav-news')),
+                dbc.NavItem(dbc.NavLink('Strategy Lab', href='#', id='nav-strategy')),
             ], navbar=True),
             html.Div([
                 html.Small(id='last-refresh-time', className='text-muted'),
@@ -213,6 +217,93 @@ app.layout = dbc.Container([
                         ], className='mt-3'),
                     ], md=5),
                 ]),
+            ]),
+        ]),
+
+        # ── Tab 4: Strategy Lab ──
+        dbc.Tab(label='Strategy Lab', children=[
+            html.Div(className='mt-3', children=[
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label('Stock ID'),
+                        dbc.Input(id='strat-stock-id', type='text', value='2330',
+                                  placeholder='e.g. 2330'),
+                    ], md=2),
+                    dbc.Col([
+                        dbc.Label('Strategy'),
+                        dbc.Select(
+                            id='strat-select',
+                            options=[{'label': cls.name, 'value': key}
+                                     for key, cls in STRATEGY_REGISTRY.items()],
+                            value='bollinger_band',
+                        ),
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Label('Category'),
+                        dbc.Select(
+                            id='strat-category-filter',
+                            options=[
+                                {'label': 'All', 'value': 'all'},
+                                {'label': 'Technical', 'value': 'technical'},
+                                {'label': 'Fundamental', 'value': 'fundamental'},
+                                {'label': 'Composite', 'value': 'composite'},
+                            ],
+                            value='all',
+                        ),
+                    ], md=2),
+                    dbc.Col([
+                        dbc.Label('\u200b'),
+                        html.Div([
+                            dbc.Button('Run Backtest', id='btn-run-backtest', color='success'),
+                        ]),
+                    ], md=2),
+                ], className='mb-3'),
+
+                # Strategy description
+                dbc.Alert(id='strat-description', color='info', className='mb-3'),
+
+                # Parameter inputs (dynamic)
+                dbc.Card([
+                    dbc.CardHeader('Strategy Parameters'),
+                    dbc.CardBody(id='strat-params-container'),
+                ], className='mb-3'),
+
+                # Results metrics
+                dbc.Row(id='strat-metrics-row', className='mb-3'),
+
+                # Charts
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardHeader('Price Chart with Signals'),
+                            dbc.CardBody([
+                                dcc.Graph(id='strat-price-chart',
+                                          config={'displayModeBar': True},
+                                          style={'height': '500px'}),
+                            ]),
+                        ]),
+                    ], md=8),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardHeader('Equity Curve'),
+                            dbc.CardBody([
+                                dcc.Graph(id='strat-equity-chart', style={'height': '240px'}),
+                            ]),
+                        ]),
+                        dbc.Card([
+                            dbc.CardHeader('Indicator'),
+                            dbc.CardBody([
+                                dcc.Graph(id='strat-indicator-chart', style={'height': '240px'}),
+                            ]),
+                        ], className='mt-2'),
+                    ], md=4),
+                ]),
+
+                # Trade log
+                dbc.Card([
+                    dbc.CardHeader('Trade Log'),
+                    dbc.CardBody(id='strat-trade-log'),
+                ], className='mt-3'),
             ]),
         ]),
     ]),
@@ -540,6 +631,243 @@ def refresh_news(n_clicks):
         ptt_children = [html.P('Could not load PTT data.', className='text-muted')]
 
     return news_children, ptt_children, ptt_type_fig
+
+
+# ─────────────────────── Strategy Lab Callbacks ───────────────────────
+
+# Filter strategies by category
+@callback(
+    Output('strat-select', 'options'),
+    Input('strat-category-filter', 'value'),
+)
+def filter_strategies(category):
+    options = []
+    for key, cls in STRATEGY_REGISTRY.items():
+        if category == 'all' or cls.category == category:
+            options.append({'label': f'{cls.name} ({cls.category})', 'value': key})
+    return options
+
+
+# Show strategy description and params
+@callback(
+    [Output('strat-description', 'children'),
+     Output('strat-params-container', 'children')],
+    Input('strat-select', 'value'),
+)
+def show_strategy_info(strategy_key):
+    if not strategy_key or strategy_key not in STRATEGY_REGISTRY:
+        return 'Select a strategy', []
+
+    cls = STRATEGY_REGISTRY[strategy_key]
+    desc = f"**{cls.name}** — {cls.description}"
+
+    # Build param inputs from schema
+    schema = cls.get_param_schema()
+    param_inputs = []
+    for param_name, info in schema.items():
+        param_inputs.append(
+            dbc.Col([
+                dbc.Label(info.get('label', param_name)),
+                dbc.Input(
+                    id={'type': 'strat-param', 'name': param_name},
+                    type='number',
+                    value=info.get('default', 0),
+                    min=info.get('min'),
+                    max=info.get('max'),
+                    step=0.1 if info.get('type') == 'float' else 1,
+                ),
+            ], md=2)
+        )
+
+    return dcc.Markdown(desc), dbc.Row(param_inputs) if param_inputs else html.P('No configurable parameters.')
+
+
+# Run backtest
+@callback(
+    [Output('strat-price-chart', 'figure'),
+     Output('strat-equity-chart', 'figure'),
+     Output('strat-indicator-chart', 'figure'),
+     Output('strat-metrics-row', 'children'),
+     Output('strat-trade-log', 'children')],
+    Input('btn-run-backtest', 'n_clicks'),
+    [State('strat-stock-id', 'value'),
+     State('strat-select', 'value')],
+    prevent_initial_call=True,
+)
+def run_backtest(n_clicks, stock_id, strategy_key):
+    dark_layout = dict(
+        template='plotly_dark',
+        paper_bgcolor='#1c2128',
+        plot_bgcolor='#0d1117',
+        margin=dict(l=40, r=40, t=40, b=40),
+    )
+    empty_fig = go.Figure()
+    empty_fig.update_layout(**dark_layout)
+
+    if not stock_id or not strategy_key or strategy_key not in STRATEGY_REGISTRY:
+        return empty_fig, empty_fig, empty_fig, [], html.P('Select a strategy and stock ID.')
+
+    try:
+        # Load price data
+        repo = Mongo(db='trading_bot', collection='stock_price')
+        price_df = repo.get_data_by_stock_id(str(stock_id))
+
+        if price_df.empty:
+            return empty_fig, empty_fig, empty_fig, [], html.P(f'No price data for {stock_id}.')
+
+        # Load extra data for fundamental strategies
+        extra_data = {}
+        try:
+            rev_repo = Mongo(db='trading_bot', collection='month_revenue')
+            extra_data['revenue_df'] = rev_repo.get_data_by_stock_id(str(stock_id))
+        except Exception:
+            pass
+        try:
+            fin_repo = Mongo(db='trading_bot', collection='income_sheet')
+            extra_data['financial_df'] = fin_repo.get_data_by_stock_id(str(stock_id))
+        except Exception:
+            pass
+
+        # Instantiate strategy with default params
+        cls = STRATEGY_REGISTRY[strategy_key]
+        strategy = cls()
+
+        # Generate signals
+        result = strategy.generate_signals(price_df, **extra_data)
+
+        # Backtest
+        backtester = Backtester()
+        bt = backtester.run(result)
+
+        # ── Price chart with signals ──
+        price_fig = go.Figure()
+        price_fig.update_layout(**dark_layout, title=f'{strategy.name} — {stock_id}')
+
+        price_fig.add_trace(go.Scatter(
+            x=result.price.index, y=result.price.values,
+            mode='lines', name='Close', line=dict(color='#8b949e', width=1),
+        ))
+
+        # Plot indicators
+        colors = ['#58a6ff', '#d29922', '#bc8cff', '#3fb950']
+        for idx, (ind_name, ind_series) in enumerate(result.indicators.items()):
+            if ind_name in ('RSI', 'K', 'D', 'MACD', 'Signal', 'Histogram',
+                            'Bias Ratio', 'Range %', 'Intent Factor', 'Cum Return',
+                            'Accum Score', 'Volume Ratio', 'YoY Growth %', 'ROE',
+                            'PER', '60d Volatility'):
+                continue  # Plot these in indicator chart
+            price_fig.add_trace(go.Scatter(
+                x=ind_series.index, y=ind_series.values,
+                mode='lines', name=ind_name,
+                line=dict(color=colors[idx % len(colors)], dash='dot', width=1),
+            ))
+
+        # Buy/sell markers
+        buy_dates = result.buy_signals[result.buy_signals].index
+        sell_dates = result.sell_signals[result.sell_signals].index
+
+        if len(buy_dates) > 0:
+            price_fig.add_trace(go.Scatter(
+                x=buy_dates, y=result.price.loc[buy_dates],
+                mode='markers', name='Buy',
+                marker=dict(symbol='triangle-up', size=12, color='#3fb950'),
+            ))
+        if len(sell_dates) > 0:
+            price_fig.add_trace(go.Scatter(
+                x=sell_dates, y=result.price.loc[sell_dates],
+                mode='markers', name='Sell',
+                marker=dict(symbol='triangle-down', size=12, color='#f85149'),
+            ))
+
+        # ── Equity curve ──
+        equity_fig = go.Figure()
+        equity_fig.update_layout(**dark_layout, title='Portfolio Value')
+        equity_fig.add_trace(go.Scatter(
+            x=bt.equity_curve.index, y=bt.equity_curve.values,
+            mode='lines', name='Equity',
+            line=dict(color='#3fb950', width=2),
+            fill='tozeroy', fillcolor='rgba(63,185,80,0.1)',
+        ))
+
+        # ── Indicator chart ──
+        ind_fig = go.Figure()
+        ind_fig.update_layout(**dark_layout, title='Indicator')
+        ind_colors = ['#58a6ff', '#d29922', '#bc8cff', '#f85149']
+        ind_plotted = False
+        for idx, (ind_name, ind_series) in enumerate(result.indicators.items()):
+            if ind_name in ('RSI', 'K', 'D', 'MACD', 'Signal', 'Histogram',
+                            'Bias Ratio', 'Range %', 'Intent Factor', 'Cum Return',
+                            'Accum Score', 'Volume Ratio', 'YoY Growth %', 'ROE',
+                            'PER', '60d Volatility'):
+                ind_fig.add_trace(go.Scatter(
+                    x=ind_series.index, y=ind_series.values,
+                    mode='lines', name=ind_name,
+                    line=dict(color=ind_colors[idx % len(ind_colors)], width=1),
+                ))
+                ind_plotted = True
+
+        if not ind_plotted:
+            for idx, (ind_name, ind_series) in enumerate(result.indicators.items()):
+                ind_fig.add_trace(go.Scatter(
+                    x=ind_series.index, y=ind_series.values,
+                    mode='lines', name=ind_name,
+                    line=dict(color=ind_colors[idx % len(ind_colors)], width=1),
+                ))
+
+        # ── Metrics cards ──
+        def metric_card(title, value, color='#58a6ff'):
+            return dbc.Col(dbc.Card(dbc.CardBody([
+                html.H4(value, style={'color': color, 'margin': 0}),
+                html.Small(title, className='text-muted'),
+            ])), md=2)
+
+        ret_color = '#3fb950' if bt.total_return_pct >= 0 else '#f85149'
+        metrics = [
+            metric_card('Total Return', f'{bt.total_return_pct:+.2f}%', ret_color),
+            metric_card('Annual Return', f'{bt.annualized_return_pct:+.2f}%', ret_color),
+            metric_card('Sharpe Ratio', f'{bt.sharpe_ratio:.2f}', '#58a6ff'),
+            metric_card('Max Drawdown', f'{bt.max_drawdown_pct:.2f}%', '#f85149'),
+            metric_card('Win Rate', f'{bt.win_rate_pct:.1f}%', '#d29922'),
+            metric_card('Benchmark (HODL)', f'{bt.benchmark_return_pct:+.2f}%', '#8b949e'),
+        ]
+
+        # ── Trade log table ──
+        if bt.trades:
+            trade_data = [{
+                'Entry': t.entry_date, 'Exit': t.exit_date,
+                'Entry Price': t.entry_price, 'Exit Price': t.exit_price,
+                'Return %': t.return_pct, 'Days': t.holding_days,
+            } for t in bt.trades]
+
+            trade_table = dash_table.DataTable(
+                data=trade_data,
+                columns=[{'name': c, 'id': c} for c in trade_data[0].keys()],
+                style_header={
+                    'backgroundColor': '#161b22', 'color': '#e6edf3',
+                    'fontWeight': 'bold', 'border': '1px solid #30363d',
+                },
+                style_data={
+                    'backgroundColor': '#1c2128', 'color': '#e6edf3',
+                    'border': '1px solid #30363d',
+                },
+                style_data_conditional=[
+                    {'if': {'filter_query': '{Return %} > 0', 'column_id': 'Return %'},
+                     'color': '#3fb950'},
+                    {'if': {'filter_query': '{Return %} < 0', 'column_id': 'Return %'},
+                     'color': '#f85149'},
+                ],
+                style_table={'overflowX': 'auto'},
+                page_size=15,
+                sort_action='native',
+            )
+        else:
+            trade_table = html.P('No trades generated.', className='text-muted')
+
+        return price_fig, equity_fig, ind_fig, metrics, trade_table
+
+    except Exception as e:
+        logger.error(f"Backtest error: {e}")
+        return empty_fig, empty_fig, empty_fig, [], html.P(f'Error: {e}', style={'color': '#f85149'})
 
 
 server = app.server
