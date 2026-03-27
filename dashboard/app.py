@@ -14,7 +14,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-from scraper_in_pys.mongo import Mongo
+from scraper_in_pys.db_factory import get_db, get_backend_name
 from scraper_in_pys.scraper_manager import ScraperManager
 from strategies import STRATEGY_REGISTRY
 from strategies.backtest import Backtester
@@ -439,7 +439,7 @@ def load_stock_data(n_clicks, stock_id, data_type):
         return go.Figure(), html.P('Please enter a stock ID.')
 
     try:
-        repo = Mongo(db='trading_bot', collection=data_type)
+        repo = get_db(db='trading_bot', collection=data_type)
         df = repo.get_data_by_stock_id(str(stock_id))
 
         if df.empty:
@@ -569,7 +569,7 @@ def refresh_news(n_clicks):
 
     # Load news from DB
     try:
-        news_repo = Mongo(db='trading_bot', collection='news')
+        news_repo = get_db(db='trading_bot', collection='news')
         news_df = news_repo.get_recent_data(limit=30)
 
         if not news_df.empty:
@@ -595,7 +595,7 @@ def refresh_news(n_clicks):
     )
 
     try:
-        ptt_repo = Mongo(db='trading_bot', collection='ptt_posts')
+        ptt_repo = get_db(db='trading_bot', collection='ptt_posts')
         ptt_df = ptt_repo.get_recent_data(limit=50)
 
         if not ptt_df.empty:
@@ -709,7 +709,7 @@ def run_backtest(n_clicks, stock_id, strategy_key):
 
     try:
         # Load price data
-        repo = Mongo(db='trading_bot', collection='stock_price')
+        repo = get_db(db='trading_bot', collection='stock_price')
         price_df = repo.get_data_by_stock_id(str(stock_id))
 
         if price_df.empty:
@@ -718,12 +718,12 @@ def run_backtest(n_clicks, stock_id, strategy_key):
         # Load extra data for fundamental strategies
         extra_data = {}
         try:
-            rev_repo = Mongo(db='trading_bot', collection='month_revenue')
+            rev_repo = get_db(db='trading_bot', collection='month_revenue')
             extra_data['revenue_df'] = rev_repo.get_data_by_stock_id(str(stock_id))
         except Exception:
             pass
         try:
-            fin_repo = Mongo(db='trading_bot', collection='income_sheet')
+            fin_repo = get_db(db='trading_bot', collection='income_sheet')
             extra_data['financial_df'] = fin_repo.get_data_by_stock_id(str(stock_id))
         except Exception:
             pass

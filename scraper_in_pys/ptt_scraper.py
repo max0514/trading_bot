@@ -5,7 +5,7 @@ import time
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
-from scraper_in_pys.mongo import Mongo
+from scraper_in_pys.db_factory import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class PTTScraper:
     """Scrapes PTT Stock board (批踢踢股票版) for market sentiment and discussion."""
 
     def __init__(self):
-        self.mongo = Mongo(db='trading_bot', collection='ptt_posts')
+        self.mongo = get_db(db='trading_bot', collection='ptt_posts')
         self.session = requests.Session()
         # Accept over-18 cookie for PTT
         self.session.cookies.set('over18', '1')

@@ -121,6 +121,10 @@ celerybeat.pid
 
 # Environments
 .env
+
+# Local SQLite database
+data/
+*.db
 .venv
 env/
 venv/

@@ -5,7 +5,7 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-from scraper_in_pys.mongo import Mongo
+from scraper_in_pys.db_factory import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class NewsScraper:
     """Scrapes financial news from multiple Taiwan sources and stores in MongoDB."""
 
     def __init__(self):
-        self.mongo = Mongo(db='trading_bot', collection='news')
+        self.mongo = get_db(db='trading_bot', collection='news')
         self._status = {"total": 0, "done": 0, "errors": 0, "running": False}
 
     @property

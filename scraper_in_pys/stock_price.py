@@ -1,7 +1,7 @@
 import logging
 import pandas as pd
 import datetime as dt
-from scraper_in_pys.mongo import Mongo
+from scraper_in_pys.db_factory import get_db
 from FinMind.data import DataLoader
 from dotenv import load_dotenv
 import os
@@ -15,7 +15,7 @@ class StockPriceScraper:
     """Fetches daily stock prices from FinMind and stores them in MongoDB."""
 
     def __init__(self, stock_id_list=None):
-        self.repo = Mongo(db='trading_bot', collection='stock_price')
+        self.repo = get_db(db='trading_bot', collection='stock_price')
         self.stock_id_list = stock_id_list or self.repo.get_stock_id_list()
         self.dl = DataLoader()
         self.dl.login_by_token(api_token=os.getenv('FINMIND_API_KEY'))

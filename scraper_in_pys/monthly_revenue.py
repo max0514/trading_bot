@@ -4,7 +4,7 @@ import pandas as pd
 import requests
 import datetime as dt
 import numpy as np
-from scraper_in_pys.mongo import Mongo
+from scraper_in_pys.db_factory import get_db
 from io import StringIO
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ class MonthlyRevenueScraper:
     """Scrapes monthly revenue data from TWSE MOPS and stores in MongoDB."""
 
     def __init__(self):
-        self.mongo = Mongo(db='trading_bot', collection='month_revenue')
+        self.mongo = get_db(db='trading_bot', collection='month_revenue')
         self._status = {"total": 0, "done": 0, "errors": 0, "running": False}
 
     @property

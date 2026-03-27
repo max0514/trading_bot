@@ -5,7 +5,7 @@ import time
 import requests
 import pandas as pd
 from io import StringIO
-from scraper_in_pys.mongo import Mongo
+from scraper_in_pys.db_factory import get_db
 
 pd.options.mode.chained_assignment = None
 logger = logging.getLogger(__name__)
@@ -25,9 +25,9 @@ class QuarterlyReportScraper:
         self.end_year = end_year or datetime.datetime.now().year
         self.year_now = datetime.datetime.now().year
 
-        self.balance_sheet_repo = Mongo(db='trading_bot', collection='balance_sheet')
-        self.income_sheet_repo = Mongo(db='trading_bot', collection='income_sheet')
-        self.cash_flow_repo = Mongo(db='trading_bot', collection='cash_flow')
+        self.balance_sheet_repo = get_db(db='trading_bot', collection='balance_sheet')
+        self.income_sheet_repo = get_db(db='trading_bot', collection='income_sheet')
+        self.cash_flow_repo = get_db(db='trading_bot', collection='cash_flow')
 
         self._status = {"total": 0, "done": 0, "errors": 0, "running": False}
 
