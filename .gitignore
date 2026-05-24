@@ -162,3 +162,7 @@ cython_debug/
 #ignore .pem file key
 *.pem
 
+
+# Backtest artifacts
+rd_strong_equity.csv
+rd_strong_trades.csv

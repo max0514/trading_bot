@@ -13,7 +13,7 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime
 
-from scraper_in_pys.mongo import Mongo
+from scraper_in_pys.mongo import Mongo, is_available as mongo_is_available
 from scraper_in_pys.scraper_manager import ScraperManager
 
 logging.basicConfig(level=logging.INFO)
@@ -69,6 +69,9 @@ app.layout = dbc.Container([
     # Interval for auto-refresh
     dcc.Interval(id='interval-refresh', interval=3000, n_intervals=0),
     dcc.Store(id='store-dummy'),
+
+    # DB connection status banner (refreshed by the same interval)
+    html.Div(id='db-status-banner'),
 
     # Navbar
     dbc.Navbar(
@@ -151,8 +154,8 @@ app.layout = dbc.Container([
                             options=[
                                 {'label': 'Stock Price', 'value': 'stock_price'},
                                 {'label': 'Monthly Revenue', 'value': 'month_revenue'},
+                                {'label': 'Income Statement', 'value': 'financial_statement'},
                                 {'label': 'Balance Sheet', 'value': 'balance_sheet'},
-                                {'label': 'Income Sheet', 'value': 'income_sheet'},
                                 {'label': 'Cash Flow', 'value': 'cash_flow'},
                             ],
                             value='stock_price',
@@ -238,7 +241,8 @@ app.layout = dbc.Container([
     [Output(f'status-badge-{name}', 'children') for name in
      ['stock_price', 'monthly_revenue', 'quarterly_report', 'news', 'ptt']] +
     [Output(f'status-badge-{name}', 'className') for name in
-     ['stock_price', 'monthly_revenue', 'quarterly_report', 'news', 'ptt']],
+     ['stock_price', 'monthly_revenue', 'quarterly_report', 'news', 'ptt']] +
+    [Output('db-status-banner', 'children')],
     Input('interval-refresh', 'n_intervals'),
 )
 def update_dashboard(n):
@@ -303,9 +307,24 @@ def update_dashboard(n):
 
     now = datetime.now().strftime('%H:%M:%S')
 
+    if mongo_is_available():
+        db_banner = dbc.Alert(
+            f"MongoDB connected ({os.getenv('MONGODB_URI', 'mongodb://127.0.0.1:27017')})",
+            color='success', dismissable=False,
+            className='mb-2', style={'padding': '0.4rem 0.75rem', 'fontSize': '0.85rem'},
+        )
+    else:
+        db_banner = dbc.Alert([
+            html.Strong('MongoDB unavailable. '),
+            'The dashboard is running, but data tabs will be empty. ',
+            'Set MONGODB_URI in .env (local default: mongodb://127.0.0.1:27017) or start a local mongod.',
+        ], color='warning', dismissable=False,
+            className='mb-2', style={'padding': '0.4rem 0.75rem', 'fontSize': '0.85rem'})
+
     return (
         ['-', '-', '-', '-', '-', str(active), f'Last update: {now}', log_children]
         + progress_vals + progress_texts + badge_texts + badge_classes
+        + [db_banner]
     )
 
 
@@ -397,28 +416,27 @@ def load_stock_data(n_clicks, stock_id, data_type):
                     yaxis2=dict(overlaying='y', side='right', showgrid=False),
                 )
 
-        elif data_type == 'month_revenue' and '當月營收' in df.columns:
+        elif data_type == 'month_revenue' and 'revenue' in df.columns:
             df['Timestamp'] = pd.to_datetime(df['Timestamp'])
             df = df.sort_values('Timestamp')
+            df['yoy_pct'] = (df['revenue'] / df['revenue'].shift(12) - 1) * 100
 
             fig.add_trace(go.Bar(
                 x=df['Timestamp'],
-                y=df['當月營收'],
+                y=df['revenue'],
                 name='Monthly Revenue',
                 marker_color='#3fb950',
             ))
-
-            if '去年同月增減(%)' in df.columns:
-                fig.add_trace(go.Scatter(
-                    x=df['Timestamp'],
-                    y=df['去年同月增減(%)'],
-                    name='YoY Growth %',
-                    yaxis='y2',
-                    line=dict(color='#d29922', width=2),
-                ))
-                fig.update_layout(
-                    yaxis2=dict(overlaying='y', side='right', title='YoY %', showgrid=False),
-                )
+            fig.add_trace(go.Scatter(
+                x=df['Timestamp'],
+                y=df['yoy_pct'],
+                name='YoY Growth %',
+                yaxis='y2',
+                line=dict(color='#d29922', width=2),
+            ))
+            fig.update_layout(
+                yaxis2=dict(overlaying='y', side='right', title='YoY %', showgrid=False),
+            )
         else:
             # Generic: show available numeric columns
             if 'Timestamp' in df.columns:
