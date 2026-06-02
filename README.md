@@ -4,7 +4,7 @@ A Taiwan-stock-market trading research platform: scrapers that pull market data
 into MongoDB, a vectorized backtest engine, and a Dash web app for monitoring
 and exploration.
 
-The project runs **entirely offline against a local MongoDB** by default — no
+The project runs on local MongoDB by default — no
 cloud account required. Pointing it at a hosted MongoDB Atlas cluster is one
 environment variable away.
 
