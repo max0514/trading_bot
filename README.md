@@ -19,6 +19,28 @@ environment variable away.
 | **Strategies** | Concrete strategies on top of the engine | `stock_strategies/` |
 | **Dashboard** | Dash web app for monitoring scrapers & exploring data | `dashboard/`, `run_dashboard.py` |
 | **Populate helper** | One-shot script to seed MongoDB from FinMind | `populate_local_db.py` |
+| **twlab** (new) | Self-hosted, FinLab-parity TW data platform — `data.get("price:收盤價")` | `twlab/`, `CONTEXT.md`, `docs/adr/` |
+
+### twlab (Phase 1, in progress)
+
+FinLab-compatible data API backed by official-source scrapers (TWSE/TPEx/MOPS…),
+MongoDB as system of record, and materialized Parquet Wide Frames:
+
+```python
+from twlab import data
+close = data.get("price:收盤價")   # Wide Frame: index=date, columns=stock_id
+data.search("收盤")                # discover Data Keys
+```
+
+Run the pipeline for a day (writes Mongo + Parquet; quarantines batches that
+fail QA Invariants):
+
+```bash
+python -m twlab.pipeline price --date 2026-08-07
+```
+
+Tests (`pip install -r requirements-dev.txt`, then `pytest`) run fully offline
+against recorded fixtures. Vocabulary in `CONTEXT.md`; decisions in `docs/adr/`.
 
 ---
 
