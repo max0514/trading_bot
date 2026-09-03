@@ -15,12 +15,15 @@ from datetime import datetime
 
 from scraper_in_pys.mongo import Mongo, is_available as mongo_is_available
 from scraper_in_pys.scraper_manager import ScraperManager
+from dashboard.twlab_panel import TwlabRunner, register_callbacks as register_twlab, twlab_card
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize the scraper manager (shared across callbacks)
 manager = ScraperManager()
+# twlab Orchestrator runs triggered from the dashboard (same path as the nightly job)
+twlab_runner = TwlabRunner()
 
 app = dash.Dash(
     __name__,
@@ -135,6 +138,11 @@ app.layout = dbc.Container([
                         ]),
                     ], md=5),
                 ]),
+
+                # twlab pipelines (official-source Datasets via the Orchestrator)
+                dbc.Row([
+                    dbc.Col(twlab_card(twlab_runner), md=12),
+                ], className='mt-3'),
             ]),
         ]),
 
@@ -559,6 +567,8 @@ def refresh_news(n_clicks):
 
     return news_children, ptt_children, ptt_type_fig
 
+
+register_twlab(twlab_runner)
 
 server = app.server
 

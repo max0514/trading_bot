@@ -36,6 +36,16 @@ def mongo_db_name() -> str:
     return os.getenv("TWLAB_MONGO_DB") or DEFAULT_MONGO_DB
 
 
+def mongo_timeout_ms() -> int:
+    """Server-selection timeout: fail fast when Mongo is down (dashboard, CLI)."""
+    return int(os.getenv("TWLAB_MONGO_TIMEOUT_MS") or 5000)
+
+
+def finmind_token() -> str | None:
+    """Optional FinMind token for the Witness (free tier works without one)."""
+    return os.getenv("FINMIND_TOKEN") or os.getenv("FINMIND_API_KEY") or None
+
+
 def server_url() -> str | None:
     """Base URL of the server's published store (research machines); None = local."""
     return os.getenv("TWLAB_SERVER_URL") or None

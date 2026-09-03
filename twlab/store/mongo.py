@@ -51,7 +51,9 @@ def _to_python(value: Any, is_int: bool) -> Any:
 
 class MongoStore:
     def __init__(self, client: MongoClient | None = None, db_name: str | None = None):
-        self._client = client or MongoClient(config.mongo_uri())
+        self._client = client or MongoClient(
+            config.mongo_uri(), serverSelectionTimeoutMS=config.mongo_timeout_ms()
+        )
         self._db = self._client[db_name or config.mongo_db_name()]
 
     def collection(self, dataset: str):

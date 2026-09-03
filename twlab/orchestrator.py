@@ -262,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "witness":
         from twlab import witness
         reports = witness.run_witness(ParquetStore(config.store_dir()), MongoStore(),
-                                      witness.FinMindClient(PoliteSession()),
+                                      witness.FinMindClient(PoliteSession(), config.finmind_token()),
                                       now=dt.datetime.now(), only=args.dataset,
                                       samples=args.samples)
         for r in reports:
@@ -275,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.witness:
         from twlab import witness
         for r in witness.run_witness(ParquetStore(config.store_dir()), MongoStore(),
-                                     witness.FinMindClient(PoliteSession()),
+                                     witness.FinMindClient(PoliteSession(), config.finmind_token()),
                                      now=args.now or dt.datetime.now()):
             print(r.summary())
     return 1 if any(r.status in ("failed", "quarantined") for r in results) else 0
