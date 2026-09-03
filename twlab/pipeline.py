@@ -72,6 +72,14 @@ def materialize(spec: DatasetSpec, mongo: MongoStore,
                        frequency=spec.frequency)
 
 
+def _fetch_kwargs(spec: DatasetSpec, store: ParquetStore) -> dict:
+    """Per-company sources receive the Stock ID universe from a materialized frame."""
+    if spec.universe_from is None:
+        return {}
+    dataset, _, field = spec.universe_from.partition(":")
+    return {"universe": [str(c) for c in store.read_frame(dataset, field).columns]}
+
+
 def _run_derived(spec: DatasetSpec, day: dt.date, mongo: MongoStore,
                  store: ParquetStore, now: dt.datetime) -> RunResult:
     try:
@@ -111,7 +119,7 @@ def run(
         return _run_derived(spec, day, mongo, store, now)
 
     session = session or PoliteSession()
-    raws = spec.fetch(session, day)
+    raws = spec.fetch(session, day, **_fetch_kwargs(spec, store))
     try:
         parts = [spec.parse(raw) for raw in raws]
     except TwlabError as exc:

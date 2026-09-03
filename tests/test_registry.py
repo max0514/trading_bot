@@ -15,7 +15,10 @@ def test_registry_fields_match_catalog(name):
         return
     catalog_keys = {f.key for f in catalog.dataset_fields(name)}
     registry_keys = {f"{name}:{f}" for f in spec.fields}
-    assert registry_keys == catalog_keys
+    if spec.coverage == "partial":
+        assert registry_keys and registry_keys <= catalog_keys
+    else:
+        assert registry_keys == catalog_keys
 
 
 @pytest.mark.parametrize("name", registry.names())

@@ -140,6 +140,12 @@ class DatasetSpec:
     align: Callable[[pd.Series], pd.Series] | None = None   # period → availability
     shape: Shape = "wide"
     depends_on: tuple[str, ...] = ()        # Datasets a derived Dataset reads
+    # "partial": only some of the Catalog's Fields are implemented yet (e.g. the
+    # `etl` Dataset's adj_* keys); the Registry coverage test then checks ⊆.
+    coverage: Literal["full", "partial"] = "full"
+    # A Data Key whose Wide Frame columns define the Stock ID universe handed
+    # to fetch(session, day, universe=[...]) — for per-company sources (MOPS).
+    universe_from: str | None = None
 
     @property
     def is_derived(self) -> bool:
