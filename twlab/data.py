@@ -9,17 +9,20 @@ returns a FinlabDataFrame read from the materialized Parquet store: a Wide
 Frame for `dataset:field` keys, the whole table for bare static keys such as
 `security_categories`. Monthly and quarterly frames arrive indexed by their
 Statutory Deadline and tagged with their frequency, so they auto-align when
-combined with daily frames. `get()` never touches MongoDB or the network.
+combined with daily frames. `get()` never touches MongoDB; on a research
+machine it syncs frames from the server through a local cache and keeps
+working offline on the last-synced data.
 """
 from __future__ import annotations
 
-from twlab import catalog, config
+from twlab import cache, catalog
 from twlab.dataframe import FinlabDataFrame
-from twlab.store.parquet import ParquetStore
 
 
-def _store() -> ParquetStore:
-    return ParquetStore(config.store_dir())
+def _store():
+    """Local store on the server; a read-through cache on research machines
+    (TWLAB_SERVER_URL / TWLAB_REMOTE_STORE) — see twlab.cache."""
+    return cache.client_store()
 
 
 def get(key: str) -> FinlabDataFrame:

@@ -36,6 +36,22 @@ def mongo_db_name() -> str:
     return os.getenv("TWLAB_MONGO_DB") or DEFAULT_MONGO_DB
 
 
+def server_url() -> str | None:
+    """Base URL of the server's published store (research machines); None = local."""
+    return os.getenv("TWLAB_SERVER_URL") or None
+
+
+def remote_store_dir() -> Path | None:
+    """The server store mounted as a directory (NAS/LAN); None = not configured."""
+    env = os.getenv("TWLAB_REMOTE_STORE")
+    return Path(env) if env else None
+
+
+def cache_ttl() -> float:
+    """Seconds between freshness checks against the server (default 1 hour)."""
+    return float(os.getenv("TWLAB_CACHE_TTL") or 3600)
+
+
 def catalog_path() -> Path:
     """Path to the FinLab catalog JSON (the coverage spec)."""
     env = os.getenv("TWLAB_CATALOG")
