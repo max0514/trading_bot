@@ -13,8 +13,10 @@ from typing import Any
 
 import pandas as pd
 
+from twlab import qa
 from twlab.errors import ParseError
 from twlab.http import PoliteSession
+from twlab.spec import Cadence, DatasetSpec
 
 TWSE_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX"
 TPEX_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/otc"
@@ -181,3 +183,28 @@ def _parse_tpex(payload: dict) -> pd.DataFrame:
         return _empty_batch()  # non-trading day
     date = _parse_date(str(payload.get("date") or table.get("date", "")), "TPEx")
     return _rows_from_table(table, _TPEX_TABLE, date)
+
+
+SPECS = [
+    DatasetSpec(
+        name="price",
+        official_source="TWSE MI_INDEX + TPEx dailyQuotes",
+        # FinLab publishes price at 21:32 — after both exchanges' final after-market files.
+        cadence=Cadence(kind="daily", at="21:32"),
+        frequency="daily",
+        fields=tuple(FIELDS),
+        int_fields=frozenset(INT_FIELDS),
+        key_fields=("stock_id", "date"),
+        invariants=(
+            qa.required_columns(["stock_id", "date", "market", *FIELDS]),
+            qa.unique_key(["stock_id", "date"]),
+            # ~1,900+ securities trade across both markets on a normal day.
+            qa.min_rows(500),
+            qa.non_negative(FIELDS),
+            qa.high_not_below_low(),
+        ),
+        backfill_start=dt.date(2007, 4, 23),  # Catalog history start for `price`
+        fetch=fetch,
+        parse=parse,
+    ),
+]

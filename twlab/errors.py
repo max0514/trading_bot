@@ -17,5 +17,9 @@ class ParseError(TwlabError):
     """
 
 
+class DeriveError(TwlabError):
+    """A derived (ETL) Dataset could not be computed consistently from its inputs."""
+
+
 class DatasetNotMaterializedError(FileNotFoundError, TwlabError):
     """No Parquet Wide Frame exists yet for the requested Data Key."""

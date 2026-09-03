@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from pathlib import Path
+from urllib.parse import urlencode
 
 import mongomock
 import pytest
@@ -21,27 +22,45 @@ DAY = dt.date(2026, 8, 7)
 NOW = dt.datetime(2026, 8, 7, 21, 32, 0)
 
 
-def load_fixture(name: str) -> dict:
-    with open(FIXTURES / "price" / name, encoding="utf-8") as f:
+def load_fixture(name: str, dataset: str = "price") -> dict:
+    """A recorded JSON response under tests/fixtures/<dataset>/."""
+    with open(FIXTURES / dataset / name, encoding="utf-8") as f:
         return json.load(f)
+
+
+def load_text_fixture(name: str, dataset: str) -> str:
+    """A recorded HTML/text response under tests/fixtures/<dataset>/."""
+    return (FIXTURES / dataset / name).read_text(encoding="utf-8")
 
 
 class FakeSession:
     """Stands in for PoliteSession at the HTTP boundary.
 
-    Maps a substring of the URL to a recorded payload and counts calls.
+    Maps a substring of the request (URL plus encoded params) to a recorded
+    payload — a dict/list for get_json, a str for get_text — and records calls.
     """
 
-    def __init__(self, payload_by_host: dict[str, dict]):
-        self._payload_by_host = payload_by_host
+    def __init__(self, payload_by_fragment: dict[str, object]):
+        self._payloads = payload_by_fragment
         self.calls: list[str] = []
 
-    def get_json(self, url: str, params=None):
-        self.calls.append(url)
-        for fragment, payload in self._payload_by_host.items():
-            if fragment in url:
+    def _lookup(self, url: str, params: dict | None):
+        request = url + ("?" + urlencode(params) if params else "")
+        self.calls.append(request)
+        for fragment, payload in self._payloads.items():
+            if fragment in request:
                 return payload
-        raise AssertionError(f"unexpected URL fetched in test: {url}")
+        raise AssertionError(f"unexpected request in test: {request}")
+
+    def get_json(self, url: str, params=None):
+        payload = self._lookup(url, params)
+        assert not isinstance(payload, str), f"get_json got a text fixture for {url}"
+        return payload
+
+    def get_text(self, url: str, params=None, encoding=None) -> str:
+        payload = self._lookup(url, params)
+        assert isinstance(payload, str), f"get_text got a JSON fixture for {url}"
+        return payload
 
 
 @pytest.fixture
@@ -74,4 +93,6 @@ def store_env(tmp_path, monkeypatch) -> Path:
     """Point the data API at this test's Parquet store."""
     root = tmp_path / "store"
     monkeypatch.setenv("TWLAB_STORE_DIR", str(root))
+    monkeypatch.delenv("TWLAB_REMOTE_STORE", raising=False)
+    monkeypatch.delenv("TWLAB_SERVER_URL", raising=False)
     return root

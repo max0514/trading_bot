@@ -6,7 +6,7 @@ that failed QA stay in the system of record (raw evidence) but carry a
 Quarantine flag, and materialization excludes them — so they can never leak
 into published Wide Frames through a later run. A subsequent good scrape of
 the same keys clears the flag. Run outcomes (ok / quarantined / no_data) are
-logged to the `runs` collection.
+logged to the `runs` collection, which the Orchestrator and dashboard query.
 """
 from __future__ import annotations
 
@@ -16,10 +16,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
-from pymongo import MongoClient, UpdateOne
+from pymongo import DESCENDING, MongoClient, UpdateOne
 
 from twlab import config
-from twlab.registry import DatasetSpec
+from twlab.spec import DatasetSpec
+
+RUNS = "runs"
 
 
 @dataclass(frozen=True)
@@ -36,10 +38,14 @@ def _to_python(value: Any, is_int: bool) -> Any:
         return None
     if isinstance(value, pd.Timestamp):
         return value.to_pydatetime()
+    if value is pd.NaT:
+        return None
     if is_int:
         return int(value)
     if isinstance(value, (int, float)):
         return float(value) if not isinstance(value, bool) else value
+    if hasattr(value, "item"):          # numpy scalar
+        return value.item()
     return value
 
 
@@ -90,15 +96,18 @@ class MongoStore:
 
     def load_long(self, spec: DatasetSpec) -> pd.DataFrame:
         """Long-form history of a Dataset (Quarantined rows excluded), for
-        Wide Frame materialization."""
+        Wide Frame materialization. Period dates are returned as stored."""
         cursor = self.collection(spec.name).find(
             {"quarantined": {"$ne": True}}, {"_id": 0, "quarantined": 0}
         )
         df = pd.DataFrame(list(cursor))
         if df.empty:
-            return pd.DataFrame(columns=["stock_id", "date", *spec.fields])
-        df["date"] = pd.to_datetime(df["date"])
+            return pd.DataFrame(columns=[*spec.key_fields, *spec.fields])
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
         return df
+
+    # ── run log ──────────────────────────────────────────────────────────
 
     def record_run(
         self,
@@ -109,7 +118,7 @@ class MongoStore:
         rows: int = 0,
         detail: list[str] | None = None,
     ) -> None:
-        self._db["runs"].insert_one(
+        self._db[RUNS].insert_one(
             {
                 "dataset": spec.name,
                 "day": dt.datetime.combine(day, dt.time()),
@@ -119,3 +128,25 @@ class MongoStore:
                 "at": now,
             }
         )
+
+    def runs(self, dataset: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """Most recent run records, newest first."""
+        query = {"dataset": dataset} if dataset else {}
+        cursor = (
+            self._db[RUNS].find(query, {"_id": 0}).sort("at", DESCENDING).limit(limit)
+        )
+        return list(cursor)
+
+    def last_ok_day(self, dataset: str) -> dt.date | None:
+        """The latest batch day this Dataset was published for (status ok)."""
+        doc = self._db[RUNS].find_one(
+            {"dataset": dataset, "status": "ok"}, sort=[("day", DESCENDING)]
+        )
+        return doc["day"].date() if doc else None
+
+    def has_run(self, dataset: str, day: dt.date, statuses: tuple[str, ...] = ("ok", "no_data")) -> bool:
+        return self._db[RUNS].count_documents({
+            "dataset": dataset,
+            "day": dt.datetime.combine(day, dt.time()),
+            "status": {"$in": list(statuses)},
+        }) > 0

@@ -5,8 +5,11 @@
     data.search("收盤")
 
 `get()` accepts FinLab's exact Data Keys (per docs/finlab_catalog.json) and
-returns a FinlabDataFrame Wide Frame read from the materialized Parquet store.
-It never touches MongoDB or the network.
+returns a FinlabDataFrame read from the materialized Parquet store: a Wide
+Frame for `dataset:field` keys, the whole table for bare static keys such as
+`security_categories`. Monthly and quarterly frames arrive indexed by their
+Statutory Deadline and tagged with their frequency, so they auto-align when
+combined with daily frames. `get()` never touches MongoDB or the network.
 """
 from __future__ import annotations
 
@@ -15,12 +18,21 @@ from twlab.dataframe import FinlabDataFrame
 from twlab.store.parquet import ParquetStore
 
 
+def _store() -> ParquetStore:
+    return ParquetStore(config.store_dir())
+
+
 def get(key: str) -> FinlabDataFrame:
-    """Resolve a Data Key to its Wide Frame (index=date, columns=Stock ID)."""
+    """Resolve a Data Key to its frame (index=date, columns=Stock ID)."""
     entry = catalog.resolve(key)
-    store = ParquetStore(config.store_dir())
-    frame = store.read_frame(entry.dataset, entry.field)
-    return FinlabDataFrame(frame)
+    store = _store()
+    if entry.field == "":
+        table = FinlabDataFrame(store.read_table(entry.dataset))
+        table._freq = "static"
+        return table
+    frame = FinlabDataFrame(store.read_frame(entry.dataset, entry.field))
+    frame._freq = store.read_manifest(entry.dataset).get("frequency", "daily")
+    return frame
 
 
 def search(keyword: str) -> list[dict[str, str]]:
