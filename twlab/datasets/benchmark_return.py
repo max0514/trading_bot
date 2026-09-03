@@ -1,8 +1,10 @@
 """`benchmark_return` Dataset: TWSE's 發行量加權股價報酬指數 (TAIEX total return).
 
-Official Source: TWSE 報酬指數 report MFI94U, which answers with the WHOLE
-month containing the query date — one row per trading day, ROC-year dates,
-comma-grouped values. fetch(session, day) pulls that month's page and parse
+Official Source: TWSE 報酬指數 report MFI94U (under /rwd/zh/TAIEX/; the
+indicesReport path 404s), which answers with the WHOLE month containing the
+query date — one row per trading day, ROC-year dates, comma-grouped values,
+and a date header spelled 日　期 with a full-width space, so header names are
+whitespace-normalised before they are located. fetch(session, day) pulls that month's page and parse
 emits one row per listed day; upserts keyed on (stock_id, date) keep the daily
 re-fetch of a growing month idempotent.
 
@@ -14,6 +16,7 @@ also the archive's first month.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Any
 
 import pandas as pd
@@ -23,7 +26,7 @@ from twlab.errors import ParseError
 from twlab.http import PoliteSession
 from twlab.spec import Cadence, DatasetSpec
 
-TWSE_URL = "https://www.twse.com.tw/rwd/zh/indicesReport/MFI94U"
+TWSE_URL = "https://www.twse.com.tw/rwd/zh/TAIEX/MFI94U"
 
 FIELD = "發行量加權股價報酬指數"   # the Dataset's only Field, named as the Catalog does
 FIELDS = [FIELD]
@@ -65,6 +68,11 @@ def _parse_number(value: Any) -> float | None:
         raise ParseError(f"unparseable number {value!r}") from exc
 
 
+def _normalise(name: Any) -> str:
+    """Header names with any whitespace (ASCII or U+3000) removed: 日　期 → 日期."""
+    return re.sub(r"\s+", "", str(name))
+
+
 def _parse_roc_date(text: str) -> pd.Timestamp:
     """'115/08/03' (民國 year) → 2026-08-03."""
     try:
@@ -90,7 +98,7 @@ def parse(raw: dict[str, Any]) -> pd.DataFrame:
             return _empty_batch()
         raise ParseError(f"TWSE: unexpected stat {stat!r}")
 
-    fields = [str(f).strip() for f in (payload.get("fields") or [])]
+    fields = [_normalise(f) for f in (payload.get("fields") or [])]
     missing = [c for c in (DATE_COLUMN, FIELD) if c not in fields]
     if missing:
         raise ParseError(

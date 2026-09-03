@@ -4,8 +4,11 @@ Official Sources: TWSE BWIBBU_d (上市 個股日本益比、殖利率及股價�
 peQryDate (上櫃), merged into one long-form batch with FinLab's field names.
 Both sources already name the three ratios the way FinLab does; columns are
 still located BY NAME in each table, so a renamed or vanished column raises
-ParseError instead of silently shifting values. A loss-maker's 本益比 prints as
-"-" on TWSE and "N/A" on TPEx; both become missing.
+ParseError instead of silently shifting values. BWIBBU_d is a flat fields/data
+payload keyed by 證券代號; peQryDate wraps an untitled table (never locate it by
+title) in tables[] keyed by 股票代號, pads 公司名稱 with trailing spaces and
+serves 股利年度 as an int. A loss-maker's 本益比 prints as "-" on TWSE and "N/A"
+on TPEx; both become missing.
 """
 from __future__ import annotations
 
@@ -43,7 +46,7 @@ _TWSE_TABLE = SourceTable(
     market="TWSE", id_column="證券代號", column_map={f: f for f in FIELDS},
 )
 _TPEX_TABLE = SourceTable(
-    market="TPEx", id_column="代號", column_map={f: f for f in FIELDS},
+    market="TPEx", id_column="股票代號", column_map={f: f for f in FIELDS},
 )
 
 
@@ -115,7 +118,11 @@ def _find_table(payload: dict, spec: SourceTable) -> dict:
 
 
 def _parse_date(text: str, source: str) -> pd.Timestamp:
+    """'20260807' / '2026/08/07' (payload date) or '115/08/07' (ROC, TPEx table date)."""
+    parts = text.strip().split("/")
     try:
+        if len(parts) == 3 and len(parts[0]) <= 3:
+            return pd.Timestamp(dt.date(int(parts[0]) + 1911, int(parts[1]), int(parts[2])))
         return pd.Timestamp(dt.datetime.strptime(text.replace("/", ""), "%Y%m%d").date())
     except ValueError as exc:
         raise ParseError(f"{source}: unparseable payload date {text!r}") from exc
@@ -192,7 +199,8 @@ SPECS = [
         invariants=(
             qa.required_columns(COLUMNS),
             qa.unique_key(["stock_id", "date"]),
-            # ~1,000 上市 + ~800 上櫃 stocks carry ratios on a normal day.
+            # 1,082 上市 + 888 上櫃 rows on 2026-08-07; the 上市 half alone
+            # clears this floor, which is what BOTH_MARKETS is for.
             qa.min_rows(1000),
             qa.non_negative(FIELDS),
             BOTH_MARKETS,

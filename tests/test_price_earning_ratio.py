@@ -1,7 +1,7 @@
 """price_earning_ratio (twlab 04) across the three seams.
 
-Seam 3: parse(raw) → rows against the recorded TWSE BWIBBU_d response and a
-format-accurate TPEx peQryDate fixture.
+Seam 3: parse(raw) → rows against the recorded TWSE BWIBBU_d and TPEx
+peQryDate responses.
 Seam 2: the pipeline with HTTP faked, asserted through run outcomes and the API.
 Seam 1: every Catalog key resolves to a Wide Frame carrying the golden values.
 """
@@ -21,13 +21,13 @@ from conftest import DAY, NOW, FakeSession, load_fixture
 DS = "price_earning_ratio"
 CATALOG_KEYS = [f.key for f in catalog.dataset_fields(DS)]
 TWSE_ROWS = 1082   # every security in the recorded BWIBBU_d response
-TPEX_ROWS = 12
+TPEX_ROWS = 888    # every security in the recorded peQryDate response
 
 # Golden values from the real TWSE recording for 2026-08-07; the FinMind
 # Witness (TaiwanStockPER) reports the same three figures for 2330.
 TSMC = {"殖利率(%)": 0.93, "本益比": 31.86, "股價淨值比": 10.43}
-# TPEx golden values are the Witness's figures embedded in the synthesized
-# fixture — see tests/fixtures/price_earning_ratio/README.md.
+# Golden values from the real TPEx recording for the same day; the Witness
+# agrees with these too.
 SAS = {"殖利率(%)": 2.08, "本益比": 23.93, "股價淨值比": 2.09}   # 5483 中美晶
 
 
@@ -90,6 +90,13 @@ def test_tpex_parse_maps_source_columns_to_catalog_fields():
     assert medigen["股價淨值比"] == 4.82
 
 
+def test_tpex_falls_back_to_the_tables_roc_date():
+    payload = load_fixture("tpex_pe_qry_date_20260807.json", DS)
+    del payload["date"]                                   # leaves tables[0].date == "115/08/07"
+    rows = price_earning_ratio.parse({"source": "tpex", "payload": payload})
+    assert rows["date"].iloc[0] == pd.Timestamp("2026-08-07")
+
+
 def test_renamed_column_fails_loudly():
     with pytest.raises(ParseError, match="本益比"):
         price_earning_ratio.parse(raw("twse", "twse_bwibbu_d_20260807_malformed.json"))
@@ -119,6 +126,15 @@ def test_unexpected_stat_rejected():
 def test_unknown_source_rejected():
     with pytest.raises(ParseError):
         price_earning_ratio.parse({"source": "nasdaq", "payload": {}})
+
+
+def test_payload_dates_accept_twse_and_roc_forms():
+    parse_date = price_earning_ratio._parse_date
+    assert parse_date("20260807", "TWSE") == pd.Timestamp("2026-08-07")
+    assert parse_date("2026/08/07", "TPEx") == pd.Timestamp("2026-08-07")
+    assert parse_date("115/08/07", "TPEx") == pd.Timestamp("2026-08-07")
+    with pytest.raises(ParseError):
+        parse_date("2026-08-07", "TPEx")
 
 
 def test_unparseable_number_rejected():

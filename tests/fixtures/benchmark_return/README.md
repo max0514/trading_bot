@@ -1,24 +1,23 @@
 # benchmark_return fixtures
 
-MFI94U-format month pages used by the parser (Seam 3) and pipeline (Seam 2) tests. No test
+Recorded MFI94U month pages used by the parser (Seam 3) and pipeline (Seam 2) tests. No test
 hits the live network.
 
-**All files are synthesized, format-accurate.** TWSE's WAF answers every request for
-`https://www.twse.com.tw/rwd/zh/indicesReport/MFI94U?date=YYYYMMDD&response=json` from the
-development network with its block page (「因為安全性考量，您所執行的頁面無法呈現」, keyed on
-the client IP), so the 報酬指數 report could not be recorded. The files follow that
-endpoint's documented shape: `{"stat": "OK", "date": <query date>, "title": "115年08月
-發行量加權股價報酬指數", "fields": ["日期", "發行量加權股價報酬指數"], "data": [[ROC date,
-comma-grouped value], …]}` — the whole month containing the query date, one row per trading
-day.
+The 報酬指數 report lives at `https://www.twse.com.tw/rwd/zh/TAIEX/MFI94U?date=YYYYMMDD&response=json`
+(the `indicesReport/MFI94U` path returns TWSE's 404 page). It answers with the whole month
+containing the query date — `{"stat": "OK", "date": <query date>, "title": "115年08月
+發行量加權股價報酬指數", "fields": ["日　期", "發行量加權股價報酬指數"], "data": [[ROC date,
+comma-grouped value], …], "total": n}` — and spells the date header `日　期` with a full-width
+space (U+3000), which the parser normalises away before locating columns. Both pages were
+recorded 2026-09-03 with Python `requests` and the twlab User-Agent.
 
-| File | Content |
+| File | Provenance |
 | --- | --- |
-| `twse_mfi94u_202608.json` | August 2026 (query date 20260807): 21 trading days whose values are the FinMind Witness's `TaiwanStockTotalReturnIndex` (`data_id=TAIEX`, field `price`) closes, recorded 2026-09-03. |
-| `twse_mfi94u_202609.json` | September 2026 as of the query date 20260903: 3 trading days, same construction. |
-| `twse_mfi94u_202608_malformed.json` | `發行量加權股價報酬指數` column renamed to `報酬指數` — a silent source format change the parser must reject. |
-| `twse_mfi94u_202609_poison.json` | September page with 115/09/02 set to `0.00`: parses cleanly but must trip the strictly-positive Invariant. |
+| `twse_mfi94u_202608.json` | **Real recording.** `?date=20260801`: August 2026, 21 trading days. Unmodified. |
+| `twse_mfi94u_202609.json` | **Real recording.** `?date=20260903`: September 2026 as of that day, 3 trading days. Unmodified. |
+| `twse_mfi94u_202608_malformed.json` | Derived from the real August page: `發行量加權股價報酬指數` renamed to `報酬指數` — a silent source format change the parser must reject. |
+| `twse_mfi94u_202609_poison.json` | Derived from the real September page: 115/09/02 set to `0.00`. Parses cleanly but must trip the strictly-positive Invariant. |
 
-Golden values asserted in tests (e.g. 2026-08-07 → 101,989.71; 2026-09-01 → 108,395.72) are
-the Witness figures. **Re-record from the real MFI94U endpoint when network access allows,
-and delete this note.**
+Golden values asserted in tests (e.g. 2026-08-07 → 101,989.71; 2026-09-01 → 108,395.72) come
+from the recordings; the FinMind Witness (`TaiwanStockTotalReturnIndex`, `data_id=TAIEX`)
+reports the same value for every one of the 24 days across both pages.

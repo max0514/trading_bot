@@ -1,6 +1,7 @@
 """benchmark_return (twlab 04) across the three seams.
 
-Seam 3: parse(raw) → rows against MFI94U-format month pages (ROC-year dates).
+Seam 3: parse(raw) → rows against recorded MFI94U month pages (ROC-year dates,
+a 日　期 header spelled with a full-width space).
 Seam 2: the pipeline with HTTP faked — a month page is re-fetched every day, so
 re-runs and month-to-month appends must never duplicate rows.
 Seam 1: the single Catalog key resolves to a one-column Wide Frame named like
@@ -31,8 +32,8 @@ SEPTEMBER_NOW = dt.datetime(2026, 9, 3, 21, 32)
 AUGUST_TRADING_DAYS = 21
 SEPTEMBER_TRADING_DAYS = 3   # the page as of 2026-09-03
 
-# Witness values (FinMind TaiwanStockTotalReturnIndex, TAIEX) embedded in the
-# synthesized MFI94U fixtures — see tests/fixtures/benchmark_return/README.md.
+# Golden values from the real MFI94U recordings; the Witness (FinMind
+# TaiwanStockTotalReturnIndex, TAIEX) agrees on every day of both pages.
 AUG_03, AUG_07, AUG_31, SEP_01 = 100_027.02, 101_989.71, 106_498.23, 108_395.72
 
 
@@ -65,6 +66,14 @@ def test_parse_shape_and_golden_values():
     assert by_date[pd.Timestamp("2026-08-03")] == AUG_03
     assert by_date[pd.Timestamp("2026-08-07")] == AUG_07
     assert by_date[pd.Timestamp("2026-08-31")] == AUG_31
+
+
+def test_date_header_whitespace_is_normalised():
+    payload = load_fixture("twse_mfi94u_202608.json", DS)
+    assert payload["fields"][0] == "日\u3000期"          # TWSE spells it with U+3000
+    for header in ("日\u3000期", "日 期", "日期"):
+        rows = benchmark_return.parse({"source": "twse", "payload": {**payload, "fields": [header, FIELD]}})
+        assert len(rows) == AUGUST_TRADING_DAYS
 
 
 def test_roc_dates_convert_to_gregorian():
@@ -110,7 +119,7 @@ def test_fetch_asks_twse_for_the_month_page_of_the_day():
     session = session_for("twse_mfi94u_202608.json")
     raws = benchmark_return.fetch(session, AUGUST_DAY)
     assert [r["source"] for r in raws] == ["twse"]
-    assert any("MFI94U?date=20260807&response=json" in c for c in session.calls)
+    assert any("/TAIEX/MFI94U?date=20260807&response=json" in c for c in session.calls)
 
 
 def test_full_run_materializes_single_column_frame(mongo, store_env):
