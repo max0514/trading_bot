@@ -2,11 +2,16 @@
 
 Official Sources: TWSE T86 (三大法人買賣超日報, 上市) and TPEx insti/dailyTrade
 (上櫃), merged into one long-form batch with FinLab's field names — the five
-investor groups' 買進 / 賣出 / 買賣超 share counts, in 股. Columns are located
-BY NAME in each source table, so a renamed or vanished column raises
-ParseError instead of silently shifting values. T86 also publishes two totals
-(自營商買賣超股數, 三大法人買賣超股數) that are not Catalog Fields; they are
-deliberately left out.
+investor groups' 買進 / 賣出 / 買賣超 share counts, in 股.
+
+T86 names every column (FinLab copied its names), so Fields are located BY
+NAME and a renamed or vanished column raises ParseError. T86 also publishes
+two totals (自營商買賣超股數, 三大法人買賣超股數) that are not Catalog Fields;
+they are left out. TPEx publishes a flat header — 代號, 名稱, then seven
+unnamed (買進股數, 賣出股數, 買賣超股數) triples and a 合計 — where only the
+POSITION says which investor group a triple belongs to; the parser pins the
+header to that exact pattern and checks the page's own arithmetic on every
+row (subtotal triples and the 合計), so a reordered column fails loudly.
 
 A dataset-specific Invariant checks 買賣超 == 買進 − 賣出 for every investor
 group on every row — exactly what a misaligned source column breaks.
@@ -58,27 +63,18 @@ _TWSE_TABLE = SourceTable(
     column_map={f: f for f in FIELDS},  # T86 already uses FinLab's names
 )
 
-_TPEX_TABLE = SourceTable(
-    market="TPEx",
-    id_column="代號",
-    column_map={
-        "外資及陸資(不含外資自營商)-買進股數": "外陸資買進股數(不含外資自營商)",
-        "外資及陸資(不含外資自營商)-賣出股數": "外陸資賣出股數(不含外資自營商)",
-        "外資及陸資(不含外資自營商)-買賣超股數": "外陸資買賣超股數(不含外資自營商)",
-        "外資自營商-買進股數": "外資自營商買進股數",
-        "外資自營商-賣出股數": "外資自營商賣出股數",
-        "外資自營商-買賣超股數": "外資自營商買賣超股數",
-        "投信-買進股數": "投信買進股數",
-        "投信-賣出股數": "投信賣出股數",
-        "投信-買賣超股數": "投信買賣超股數",
-        "自營商(自行買賣)-買進股數": "自營商買進股數(自行買賣)",
-        "自營商(自行買賣)-賣出股數": "自營商賣出股數(自行買賣)",
-        "自營商(自行買賣)-買賣超股數": "自營商買賣超股數(自行買賣)",
-        "自營商(避險)-買進股數": "自營商買進股數(避險)",
-        "自營商(避險)-賣出股數": "自營商賣出股數(避險)",
-        "自營商(避險)-買賣超股數": "自營商買賣超股數(避險)",
-    },
+# TPEx's flat header: 代號, 名稱, seven (買進股數, 賣出股數, 買賣超股數) triples, 合計.
+TPEX_ID_COLUMN = "代號"
+TPEX_NAME_COLUMN = "名稱"
+TPEX_TRIPLE = ("買進股數", "賣出股數", "買賣超股數")
+TPEX_TOTAL_COLUMN = "三大法人買賣超股數合計"
+# Investor group of each triple, by position. Verified by the identities the
+# page obeys: triple 3 = 1 + 2, triple 7 = 5 + 6, 合計 = nets of 3 + 4 + 7.
+TPEX_GROUP_ORDER = (
+    "外陸資(不含外資自營商)", "外資自營商", "外資及陸資合計",
+    "投信", "自營商(自行買賣)", "自營商(避險)", "自營商合計",
 )
+TPEX_HEADER = [TPEX_ID_COLUMN, TPEX_NAME_COLUMN, *(TPEX_TRIPLE * len(TPEX_GROUP_ORDER)), TPEX_TOTAL_COLUMN]
 
 
 def fetch(session: PoliteSession, day: dt.date) -> list[dict[str, Any]]:
@@ -144,8 +140,12 @@ def _parse_int(value: Any) -> int | None:
 
 
 def _parse_date(text: str, source: str) -> pd.Timestamp:
+    """'20260902', '2026/09/02' or the ROC form '115/09/02' → Timestamp."""
+    parts = text.strip().split("/")
     try:
-        return pd.Timestamp(dt.datetime.strptime(text.replace("/", ""), "%Y%m%d").date())
+        if len(parts) == 3 and len(parts[0]) <= 3:          # ROC calendar year
+            return pd.Timestamp(dt.date(int(parts[0]) + 1911, int(parts[1]), int(parts[2])))
+        return pd.Timestamp(dt.datetime.strptime("".join(parts), "%Y%m%d").date())
     except ValueError as exc:
         raise ParseError(f"{source}: unparseable payload date {text!r}") from exc
 
@@ -198,12 +198,30 @@ def _parse_twse(payload: dict) -> pd.DataFrame:
 def _find_tpex_table(payload: dict) -> dict:
     for table in payload.get("tables", []):
         fields = [str(f).strip() for f in (table.get("fields") or [])]
-        if _TPEX_TABLE.id_column in fields:
+        if TPEX_ID_COLUMN in fields:
             return {**table, "fields": fields}
     raise ParseError(
-        f"TPEx: no table with a {_TPEX_TABLE.id_column!r} column — source format "
+        f"TPEx: no table with a {TPEX_ID_COLUMN!r} column — source format "
         f"changed? tables: {[str(t.get('title'))[:30] for t in payload.get('tables', [])]}"
     )
+
+
+def _check_tpex_arithmetic(stock_id: str, triples: list[tuple], total: int | None) -> None:
+    """The page's own identities, checked per row: any column reorder breaks them."""
+    if total is None or any(v is None for triple in triples for v in triple):
+        return
+    foreign, foreign_dealer, foreign_all, _trust, dealer_own, dealer_hedge, dealer_all = triples
+    consistent = (
+        all(buy - sell == net for buy, sell, net in triples)
+        and tuple(a + b for a, b in zip(foreign, foreign_dealer)) == foreign_all
+        and tuple(a + b for a, b in zip(dealer_own, dealer_hedge)) == dealer_all
+        and total == foreign_all[2] + _trust[2] + dealer_all[2]
+    )
+    if not consistent:
+        raise ParseError(
+            f"TPEx: {stock_id}: 三大法人 columns do not add up (triples {triples}, "
+            f"合計 {total}) — column order changed?"
+        )
 
 
 def _parse_tpex(payload: dict) -> pd.DataFrame:
@@ -211,10 +229,36 @@ def _parse_tpex(payload: dict) -> pd.DataFrame:
     if stat.lower() != "ok":
         raise ParseError(f"TPEx: unexpected stat {stat!r}")
     table = _find_tpex_table(payload)
+    if table["fields"] != TPEX_HEADER:
+        raise ParseError(
+            f"TPEx: header is not {TPEX_ID_COLUMN}/{TPEX_NAME_COLUMN} + "
+            f"{len(TPEX_GROUP_ORDER)} × {TPEX_TRIPLE} + {TPEX_TOTAL_COLUMN}: got "
+            f"{table['fields']} — source format changed?"
+        )
     if not table.get("data"):
         return _empty_batch()  # non-trading day
-    date = _parse_date(str(payload.get("date") or table.get("date", "")), "TPEx")
-    return _rows_from_table(table["fields"], table["data"], _TPEX_TABLE, date)
+    date = _parse_date(str(table.get("date") or payload.get("date", "")), "TPEx")
+    first_value = len((TPEX_ID_COLUMN, TPEX_NAME_COLUMN))
+    records = []
+    for row in table["data"]:
+        if len(row) < len(TPEX_HEADER):
+            raise ParseError(
+                f"TPEx: row has {len(row)} cells under a {len(TPEX_HEADER)}-column "
+                f"header: {row[:2]} — source format changed?"
+            )
+        stock_id = str(row[0]).strip()
+        triples = [
+            tuple(_parse_int(row[first_value + 3 * k + j]) for j in range(3))
+            for k in range(len(TPEX_GROUP_ORDER))
+        ]
+        total = _parse_int(row[first_value + 3 * len(TPEX_GROUP_ORDER)])
+        _check_tpex_arithmetic(stock_id, triples, total)
+        record: dict[str, Any] = {"stock_id": stock_id, "date": date, "market": "TPEx"}
+        for group, triple in zip(TPEX_GROUP_ORDER, triples):
+            if group in GROUPS:                     # subtotal triples are not Fields
+                record.update(zip(GROUPS[group], triple))
+        records.append(record)
+    return pd.DataFrame(records, columns=["stock_id", "date", "market", *FIELDS])
 
 
 def net_equals_buy_minus_sell() -> qa.Invariant:

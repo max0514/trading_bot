@@ -1,8 +1,8 @@
 """security_categories (twlab 06) across the three seams.
 
-Seam 3: parse(raw) → rows against ISIN-page fixtures (MS950, section-header
-rows): equities and ETFs are kept, warrants and other sections skipped, and a
-renamed column or a page for the wrong market fails loudly.
+Seam 3: parse(raw) → rows against the recorded ISIN pages (MS950, section-header
+rows): 股票 / 特別股 / 創新板 / ETF / TDR rows are kept, warrants and the other
+sections skipped, and a renamed column or a page for the wrong market fails loudly.
 Seam 2: the pipeline with HTTP faked — a static table that upserts idempotently
 and keeps serving the last good table when a scrape is Quarantined.
 Seam 1: the bare Catalog key resolves to the table, which covers every 4-digit
@@ -24,9 +24,12 @@ from conftest import FIXTURES, FakeSession, load_fixture
 DS = "security_categories"
 DAY = dt.date(2026, 9, 3)                 # a static table: the batch day is just the run day
 NOW = dt.datetime(2026, 9, 3, 20, 0)
-SII_ROWS = 1215 + 36 + 271 + 36           # 股票 + 創新板股票 + ETF + 臺灣存託憑證 sections of the 上市 page
-OTC_ROWS = 927 + 151                      # 股票 + ETF sections of the 上櫃 page
+SII_ROWS = 1054 + 28 + 30 + 240 + 10      # 股票 + 特別股 + 創新板 + ETF + 臺灣存託憑證(TDR) on the 上市 page
+OTC_ROWS = 890 + 1 + 120                  # 股票 + 特別股 + ETF on the 上櫃 page
 KEYS = sorted({f.key for f in catalog.dataset_fields(DS)})
+# 三商壽 traded on 2026-08-07 (the price recording) but last traded 2026-08-19 and
+# is gone from the 2026-09-03 ISIN pages — see the fixture README.
+DELISTED_SINCE_PRICE_RECORDING = {"2867"}
 
 WAF_BLOCK_PAGE = (
     "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head>"
@@ -66,21 +69,25 @@ def test_sii_parse_shape_and_golden_values():
     assert by_id.loc["2330", "name"] == "台積電"
     assert by_id.loc["2330", "category"] == "半導體業"
     assert by_id.loc["1101", "category"] == "水泥工業"
+    assert by_id.loc["6869", "category"] == "綠能環保"
     assert by_id.loc["0050", "name"] == "元大台灣50"
     assert by_id.loc["0050", "category"] == "ETF"          # ETFs get the section name, not 產業別
     assert by_id.loc["00631L", "category"] == "ETF"
-    assert by_id.loc["2881A", "category"] == "金融保險"     # preferred shares sit in the 股票 section
+    assert by_id.loc["2881A", "category"] == "金融保險業"    # 特別股 section, real ISIN spelling
+    assert by_id.loc["2237", "name"] == "華德動能-創"        # 創新板 section: 市場別 上市臺灣創新板
+    assert by_id.loc["2237", "category"] == "汽車工業"
+    assert by_id.loc["9103", "category"] == "存託憑證"      # 4-digit TDRs are in the price universe
 
 
-def test_sii_parse_keeps_tdrs_and_skips_warrants_and_other_sections():
+def test_sii_parse_skips_warrants_and_other_sections():
     rows = security_categories.parse(raw("sii", "isin_c_public_strmode2.html"))
     ids = set(rows["stock_id"])
-    by_id = rows.set_index("stock_id")
-    # 4-digit TDRs trade in the same universe as stocks and must be covered.
-    assert by_id.loc["9103", "category"] == "存託憑證"
-    assert "030001" not in ids and "03500P" not in ids      # 上市認購(售)權證
-    assert "020000" not in ids and not any(i.startswith("02") for i in ids)   # ETN
-    assert not rows["category"].eq("").any()
+    assert not ids & {"03001T", "03002T", "03003T"}         # 上市認購(售)權證 rows kept in the fixture
+    assert not any(i.startswith("02") for i in ids)         # ETN
+    assert not rows["stock_id"].str.match(r"^01\d{3}T$").any()   # 受益證券-不動產投資信託
+    # The page leaves 產業別 blank for a couple of preferred shares; nothing else is blank.
+    blank = rows.loc[rows["category"] == "", "stock_id"]
+    assert len(blank) and blank.str.match(r"^\d{4}[A-Z]$").all()
 
 
 def test_otc_parse_maps_market():
@@ -90,7 +97,7 @@ def test_otc_parse_maps_market():
     by_id = rows.set_index("stock_id")
     assert by_id.loc["5483", "name"] == "中美晶"
     assert by_id.loc["5483", "category"] == "半導體業"
-    assert "709966" not in by_id.index                      # 上櫃認購(售)權證
+    assert "700019" not in by_id.index                      # 上櫃認購(售)權證 (listed before 股票 on this page)
     assert (by_id[by_id.index.str.startswith("00")]["category"] == "ETF").all()
 
 
@@ -158,7 +165,7 @@ def test_table_covers_the_whole_listed_universe(mongo, store_env):
     assert len(listed) > 1000
 
     table = data.get("security_categories")
-    assert listed <= set(table["stock_id"])
+    assert listed - set(table["stock_id"]) == DELISTED_SINCE_PRICE_RECORDING
 
 
 def test_rerun_is_idempotent(mongo, store):

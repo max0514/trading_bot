@@ -3,11 +3,11 @@
 Official Source: the TWSE ISIN site (isin.twse.com.tw C_public.jsp) — strMode=2
 lists 上市 securities and strMode=4 上櫃. Each is an MS950 HTML page with one
 table whose rows are grouped by section-header rows spanning the table
-(股票, 上市認購(售)權證, ETF, 臺灣存託憑證, 受益證券, ETN, …). Equities carry
-their 產業別 as the category, ETFs the constant "ETF", 臺灣存託憑證 the constant
-"存託憑證" (4-digit TDRs trade in the same universe as stocks); warrants and
-the remaining sections are skipped. Markets follow FinLab's convention:
-"sii" for 上市, "otc" for 上櫃.
+(股票, 上市認購(售)權證, 特別股, 創新板, ETF, ETN, 臺灣存託憑證(TDR), 受益證券-…).
+Equities — 股票, 特別股 and 創新板 — carry their 產業別 as the category, ETFs
+the constant "ETF", TDRs the constant "存託憑證" (4-digit TDRs trade in the
+same universe as stocks); warrants, ETNs and 受益證券 are skipped. Markets
+follow FinLab's convention: "sii" for 上市, "otc" for 上櫃.
 
 A static table: no date column, keyed on stock_id, cheap to re-scrape nightly
 and upserted idempotently. The batch `day` handed to fetch() is just the run
@@ -48,9 +48,10 @@ INDUSTRY_COLUMN = "產業別"
 INDUSTRY = None
 SECTION_CATEGORY: dict[str, str | None] = {
     "股票": INDUSTRY,
-    "創新板股票": INDUSTRY,
+    "特別股": INDUSTRY,
+    "創新板": INDUSTRY,
     "ETF": "ETF",
-    "臺灣存託憑證": "存託憑證",
+    "臺灣存託憑證(TDR)": "存託憑證",
 }
 _STOCK_ID_RE = re.compile(r"^[0-9A-Z]{4,6}$")
 
@@ -123,7 +124,8 @@ def parse(raw: dict[str, Any]) -> pd.DataFrame:
             continue
         stock_id, name = _split_id_name(cells[header[ID_NAME_COLUMN]], source)
         market = cells[header[MARKET_COLUMN]]
-        if market != expected_market:
+        # 創新板 rows say 上市臺灣創新板; the market is the leading 上市 / 上櫃.
+        if not market.startswith(expected_market):
             raise ParseError(
                 f"{source}: expected 市場別 {expected_market!r} but the page says "
                 f"{market!r} for {stock_id} — wrong strMode page?"
