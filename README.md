@@ -21,23 +21,35 @@ environment variable away.
 | **Populate helper** | One-shot script to seed MongoDB from FinMind | `populate_local_db.py` |
 | **twlab** (new) | Self-hosted, FinLab-parity TW data platform — `data.get("price:收盤價")` | `twlab/`, `CONTEXT.md`, `docs/adr/` |
 
-### twlab (Phase 1, in progress)
+### twlab (Phase 1 complete)
 
-FinLab-compatible data API backed by official-source scrapers (TWSE/TPEx/MOPS…),
-MongoDB as system of record, and materialized Parquet Wide Frames:
+FinLab-compatible data API backed by official-source scrapers (TWSE, TPEx, MOPS,
+ISIN), MongoDB as system of record, QA Invariants + a FinMind Witness, and
+materialized Parquet Wide Frames — 14 Datasets covering price, adjusted prices,
+monthly revenue, quarterly statements (158 Fields), 53 財務指標, valuation ratios,
+三大法人, corporate actions, security categories, and the total-return benchmark:
 
 ```python
 from twlab import data
-close = data.get("price:收盤價")   # Wide Frame: index=date, columns=stock_id
-data.search("收盤")                # discover Data Keys
+close = data.get("price:收盤價")                    # daily Wide Frame
+rev_yoy = data.get("monthly_revenue:去年同月增減(%)")  # indexed by Statutory Deadline
+position = (rev_yoy > 20) & (close > close.average(60))   # auto-aligns monthly → daily
+data.search("營收")                                  # discover Data Keys
 ```
 
-Run the pipeline for a day (writes Mongo + Parquet; quarantines batches that
-fail QA Invariants):
+Run the nightly Orchestrator (due-ness from each Dataset's Cadence, catch-up,
+Quarantine on Invariant failure), one Dataset, or a backfill:
 
 ```bash
+python -m twlab.orchestrator run          # everything due; `status` shows outcomes
 python -m twlab.pipeline price --date 2026-08-07
+python -m twlab.orchestrator backfill monthly_revenue --from 2023-01-01
 ```
+
+Deploy with `docker compose up -d` (see `docs/deploy.md`); research machines set
+`TWLAB_SERVER_URL` and read through an offline-capable local cache. A FinLab
+strategy runs with only its imports changed — see `examples/finlab_peg_strategy.py`
+— and the legacy `backtest/data.py` loaders are a shim over twlab.
 
 Tests (`pip install -r requirements-dev.txt`, then `pytest`) run fully offline
 against recorded fixtures. Vocabulary in `CONTEXT.md`; decisions in `docs/adr/`.
