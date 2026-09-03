@@ -127,6 +127,8 @@ def run(
         mongo.record_run(spec, day, "quarantined", now, detail=[f"parse: {exc}"])
         return RunResult(dataset, day, "quarantined", failures=[f"parse: {exc}"])
 
+    # Drop empty halves (a market's holiday) so concat keeps the typed dtypes.
+    parts = [p for p in parts if not p.empty]
     batch = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     if batch.empty:
         mongo.record_run(spec, day, "no_data", now)
