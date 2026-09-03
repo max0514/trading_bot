@@ -42,7 +42,7 @@ TSMC_Q1_2026 = {
     "歸屬非控制權益淨利_損": 321_552, "本期綜合損益總額": 626_796_955, "每股盈餘": 22.08,
     "現金及約當現金": 3_035_637_228, "存貨": 311_453_459, "流動資產": 4_265_512_176,
     "不動產廠房及設備": 3_954_679_396, "資產總額": 8_660_949_685,
-    "流動負債": 1_714_253_448, "負債總額": 2_728_560_764, "普通股股本": 259_323_701,
+    "流動負債": 1_714_253_448, "負債總額": 2_728_560_764, "普通股股本": 259_325_245, "股本": 259_323_701,
     "母公司股東權益合計": 5_890_960_252, "股東權益總額": 5_932_388_921,
     "負債及股東權益總額": 8_660_949_685,
     "本期稅前淨利_淨損": 687_799_687, "折舊費用": 163_312_605, "攤銷費用": 2_137_832,
@@ -173,14 +173,21 @@ def test_missing_optional_line_items_are_none_not_errors():
         assert pd.isna(tsmc[field]), field
 
 
-def test_derived_sums_combine_component_lines():
+def test_derived_sums_and_aliases_from_the_real_1101_page():
     cement = one_row(fs.parse(raw_q1("1101")), "1101")
-    assert cement["應收帳款及票據"] == 17_520_000 + 1_460_000       # 應收帳款淨額 + 應收票據淨額
-    assert cement["應付帳款及票據"] == 10_628_800 + 1_518_400       # 應付帳款 + 應付票據
-    assert cement["商譽及無形資產合計"] == 1_168_000 + 1_752_000    # 無形資產 + 商譽
-    assert cement["其他應收款"] == 1_168_000                         # MOPS spells it 其他應收款淨額
-    assert cement["應付商業本票∕承兌匯票"] == 4_555_200              # MOPS: 應付短期票券
-    assert cement["庫藏股票帳面值"] == -800_000
+    assert cement["應收帳款及票據"] == 4_085_885 + 23_524_066 + 428_294   # 應收票據淨額 + 應收帳款淨額 + 關係人
+    assert cement["應付帳款及票據"] == 13_359_245 + 666_929               # 應付帳款 + 應付帳款－關係人 (no 應付票據 line)
+    assert cement["商譽及無形資產合計"] == 63_933_806                       # 無形資產 alone: no separate 商譽 line
+    assert cement["其他應收款"] == 4_176_862                                # MOPS spells it 其他應收款淨額
+    assert cement["應付商業本票∕承兌匯票"] == 1_208_818                      # MOPS: 應付短期票券
+    assert cement["庫藏股票帳面值"] == -979_439
+    assert cement["特別股股本"] == 2_000_000
+    assert cement["合約負債_流動"] == 1_950_240
+    assert cement["租賃負債─流動"] == 907_585                               # Catalog's ─ (U+2500) spelling
+    assert cement["呆帳費用提列_轉列收入_數"] == -11_694                    # MOPS's combined 預期信用減損…／呆帳費用提列… label
+    assert cement["非金融資產減損迴轉利益"] == 56_728
+    assert cement["應付短期票券減少"] == -1_297_968
+    assert cement["每股盈餘"] == 0.10
 
 
 def test_q2_decumulates_cash_flow_and_takes_the_three_month_income_column():
@@ -224,6 +231,8 @@ def test_page_for_another_company_fails_loudly():
 def test_page_for_another_period_fails_loudly():
     with pytest.raises(ParseError, match="115"):
         fs.parse(raw_q1("2330", year=2025, season=1))      # 114/1 requested, 115/1 served
+    with pytest.raises(ParseError, match="season"):
+        fs.parse(raw_q1("2330", year=2026, season=2))      # 115/2 requested, 115/1 served
 
 
 def test_unparseable_number_fails_loudly():

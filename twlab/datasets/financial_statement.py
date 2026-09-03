@@ -3,16 +3,31 @@
 Official Source: MOPS per-company IFRS statement pages (公開資訊觀測站) — one GET
 per statement per company per quarter, fetched with `session.get_text`:
 
-    資產負債表  https://mops.twse.com.tw/mops/web/ajax_t164sb03
-    綜合損益表  https://mops.twse.com.tw/mops/web/ajax_t164sb04
-    現金流量表  https://mops.twse.com.tw/mops/web/ajax_t164sb05
+    資產負債表  https://mopsov.twse.com.tw/mops/web/ajax_t164sb03
+    綜合損益表  https://mopsov.twse.com.tw/mops/web/ajax_t164sb04
+    現金流量表  https://mopsov.twse.com.tw/mops/web/ajax_t164sb05
 
 each with `...&co_id=<Stock ID>&year=<ROC year>&season=<1-4>` (see
-`query_params`). A page holds one table whose first column is 會計項目 (account
-names as MOPS prints them) and whose value columns carry the period in their
-header. Values are 千元 exactly as MOPS publishes and FinLab serves them;
-每股盈餘 is 元. The query is echoed back as hidden form inputs, which parse()
-checks so MOPS can never silently serve another company or period.
+`query_params`). The host is MOPS's legacy site: when the new
+mops.twse.com.tw launched, the old application moved to mopsov.twse.com.tw
+and the new host WAF-blocks or 404s these ajax endpoints; mopsov serves them
+as `text/html; charset=UTF-8` to a plain identifiable client.
+
+Page layout (as recorded in tests/fixtures/financial_statement/): a `hasBorder`
+table captioned by two `<th colspan>` rows (`民國115年第1季`, `單位：新台幣仟元`),
+then the `會計項目` header row whose other cells carry the period labels
+(colspan 2 over a `金額` / `%` sub-header; the cash-flow statement has `金額`
+only), then one row per account, sub-items indented with full-width spaces,
+values space-padded and comma-grouped, negatives with a leading minus. Values
+are 千元 exactly as MOPS publishes and FinLab serves them; 每股盈餘 is 元. Section
+headings are rows with blank cells, and MOPS repeats some labels as a heading
+followed by an indented value row (其他收益及費損淨額, 基本每股盈餘), so labels
+are merged position-wise with the first non-empty value winning. There are no
+hidden form inputs; the page identifies itself through its XBRL link
+(`CO_ID=2330&SYEAR=2026&SSEASON=1`), its e-book link (`co_id=2330&year=115`)
+and the caption, all of which parse() checks so MOPS can never silently serve
+another company or period. 財務成本淨額 is printed as a positive amount inside
+營業外收入及支出 and is passed through as printed.
 
 Universe
 --------
@@ -31,14 +46,15 @@ FinLab serves SINGLE-QUARTER values for income-statement and cash-flow Fields
 (strategies do `.rolling(4).sum()` for TTM) and point-in-time values for
 balance-sheet Fields. MOPS, however, prints:
 
-* income statement — Q1: only the quarter (`115年第1季`); Q2/Q3: the three-month
-  column (`115年第2季`) AND a cumulative one (`115年上半年度` / `115年前三季`);
-  Q4 (`season=4`): the annual report with only the full year (`115年度`);
-* cash flow — ALWAYS year-to-date columns (`115年01月01日至115年06月30日`).
+* income statement — Q1–Q3: the three-month column (`115年第2季`) AND the
+  year-to-date one (`115年01月01日至115年06月30日`); Q4 (`season=4`): the annual
+  report with only the full year (`114年度`);
+* cash flow — ALWAYS year-to-date columns (`115年01月01日至115年06月30日`, and
+  `114年度` on the annual report).
 
-parse() therefore takes the three-month income column when the page has one,
-and otherwise de-cumulates: single = YTD(season) − YTD(season − 1). The
-previous season's page is bundled by fetch() into the same raw dict —
+parse() therefore takes the three-month income column when the page has one
+(Q1–Q3), and otherwise de-cumulates: single = YTD(season) − YTD(season − 1).
+The previous season's page is bundled by fetch() into the same raw dict —
 `prev_income` for Q4, `prev_cash_flow` for Q2–Q4 — so a raw dict is
 self-contained: {"stock_id", "year", "season", "balance_sheet", "income",
 "cash_flow", "prev_income"?, "prev_cash_flow"?}. A line item present in one
@@ -74,21 +90,22 @@ parentheses, 、 and ／, whitespace) into `_` — the Catalog's own convention
 (MOPS '營業活動之淨現金流入（流出）' ↔ Catalog '營業活動之淨現金流入_流出'). Where
 the Catalog keeps an older or FinLab-specific name the mapping is a deliberate
 alias: 合併總損益 ← 本期淨利（淨損）; 股東權益總額 ← 權益總額; 母公司股東權益合計 ←
-歸屬於母公司業主之權益合計; 採權益法之長期股權投資 ← 採用權益法之投資; 應付商業本票∕
-承兌匯票 ← 應付短期票券; 銀行借款_非流動 ← 長期借款; 應計退休金負債 ← 淨確定福利負債
-－非流動; 遞延所得稅 (liability side) ← 遞延所得稅負債; 一年內到期長期負債 ← 一年或
-一營業週期內到期長期負債; 呆帳費用提列_轉列收入_數 ← 呆帳費用提列（轉列收入）數 or
-its IFRS 9 successor 預期信用減損損失（利益）數. Three Fields are sums of MOPS
-lines (`Sum`): 應收帳款及票據, 應付帳款及票據 (notes + accounts, incl. related
-parties) and 商譽及無形資產合計 (無形資產 + 商譽). Two Fields are pre-IFRS
-concepts with no IFRS line — 遞延資產合計 and 遞延貸項 — and map only to a
-same-named line, so they are None for IFRS-era filings. A company that does
-not report a line (no 使用權資產, no 停業單位損益) gets None, never an error.
+歸屬於母公司業主之權益合計; 歸屬母公司淨利_損 ← the attribution row 母公司業主
+（淨利／損）(likewise 非控制權益 / 共同控制下前手權益, and the （綜合損益） rows);
+採權益法之長期股權投資 ← 採用權益法之投資; 應付商業本票∕承兌匯票 ← 應付短期票券;
+銀行借款_非流動 ← 長期借款; 應計退休金負債 ← 淨確定福利負債－非流動; 遞延所得稅
+(liability side) ← 遞延所得稅負債; 一年內到期長期負債 ← 一年或一營業週期內到期長期
+負債; 呆帳費用提列_轉列收入_數 ← MOPS's combined 預期信用減損損失（利益）數／呆帳費用
+提列（轉列收入）數 line. Three Fields are sums of MOPS lines (`Sum`): 應收帳款及
+票據, 應付帳款及票據 (notes + accounts, incl. related parties) and 商譽及無形資產
+合計 (無形資產 + 商譽). Two Fields are pre-IFRS concepts with no IFRS line —
+遞延資產合計 and 遞延貸項 — and map only to a same-named line, so they are None
+for IFRS-era filings. A company that does not report a line (no 短期借款, no
+停業單位損益) gets None, never an error.
 """
 from __future__ import annotations
 
 import datetime as dt
-import io
 import math
 import re
 from dataclasses import dataclass
@@ -96,13 +113,19 @@ from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
+from lxml import etree as lxml_etree
+from lxml import html as lxml_html
 
 from twlab import qa
 from twlab.errors import ParseError
 from twlab.http import PoliteSession
 from twlab.spec import Cadence, DatasetSpec, align_quarterly, latest_quarter_due, quarter_end
 
-MOPS_URL = "https://mops.twse.com.tw/mops/web/ajax_t164sb{page}"
+# The legacy host: the ajax_t164sb* endpoints live on mopsov.twse.com.tw (the old
+# site moved there when the new mops.twse.com.tw launched; the new host WAF-blocks
+# or 404s these paths). Pages are served as text/html; charset=UTF-8.
+MOPS_HOST = "https://mopsov.twse.com.tw"
+MOPS_URL = MOPS_HOST + "/mops/web/ajax_t164sb{page}"
 STATEMENT_URLS = {
     "balance_sheet": MOPS_URL.format(page="03"),
     "income": MOPS_URL.format(page="04"),
@@ -118,7 +141,6 @@ BALANCE_TOLERANCE = 0.005        # 資產總額 vs 負債總額 + 股東權益�
 GROSS_PROFIT_TOLERANCE = 0.005   # 營業毛利 vs 營業收入淨額 − 營業成本, relative to revenue
 
 _COMPANY_RE = re.compile(r"[1-9]\d{3}")
-_CUMULATIVE_SUFFIX = {1: "第1季", 2: "上半年度", 3: "前三季", 4: "度"}
 
 
 @dataclass(frozen=True)
@@ -233,12 +255,12 @@ _INCOME: dict[str, tuple[str, ...] | Sum] = {
     "合併前非屬共同控制股權損益": ("合併前非屬共同控制股權損益",),
     "合併總損益": ("本期淨利（淨損）",),
     "本期綜合損益總額": ("本期綜合損益總額",),
-    "歸屬母公司淨利_損": ("淨利（淨損）歸屬於母公司業主",),
-    "歸屬非控制權益淨利_損": ("淨利（淨損）歸屬於非控制權益",),
-    "歸屬共同控制下前手權益淨利_損": ("淨利（淨損）歸屬於共同控制下前手權益",),
-    "綜合損益歸屬母公司": ("綜合損益總額歸屬於母公司業主",),
-    "綜合損益歸屬非控制權益": ("綜合損益總額歸屬於非控制權益",),
-    "綜合損益歸屬共同控制下前手權益": ("綜合損益總額歸屬於共同控制下前手權益",),
+    "歸屬母公司淨利_損": ("母公司業主（淨利／損）", "淨利（淨損）歸屬於母公司業主"),
+    "歸屬非控制權益淨利_損": ("非控制權益（淨利／損）", "淨利（淨損）歸屬於非控制權益"),
+    "歸屬共同控制下前手權益淨利_損": ("共同控制下前手權益（淨利／損）", "淨利（淨損）歸屬於共同控制下前手權益"),
+    "綜合損益歸屬母公司": ("母公司業主（綜合損益）", "綜合損益總額歸屬於母公司業主"),
+    "綜合損益歸屬非控制權益": ("非控制權益（綜合損益）", "綜合損益總額歸屬於非控制權益"),
+    "綜合損益歸屬共同控制下前手權益": ("共同控制下前手權益（綜合損益）", "綜合損益總額歸屬於共同控制下前手權益"),
     "每股盈餘": ("基本每股盈餘", "基本每股盈餘合計"),
 }
 
@@ -247,7 +269,8 @@ _CASH_FLOW: dict[str, tuple[str, ...] | Sum] = {
     "本期稅前淨利_淨損": ("本期稅前淨利（淨損）",),
     "折舊費用": ("折舊費用",),
     "攤銷費用": ("攤銷費用",),
-    "呆帳費用提列_轉列收入_數": ("呆帳費用提列（轉列收入）數", "預期信用減損損失（利益）數"),
+    "呆帳費用提列_轉列收入_數": ("預期信用減損損失（利益）數／呆帳費用提列（轉列收入）數",
+                          "呆帳費用提列（轉列收入）數", "預期信用減損損失（利益）數"),
     "透過損益按公允價值衡量金融資產及負債之淨損失_利益": ("透過損益按公允價值衡量金融資產及負債之淨損失（利益）",),
     "利息費用": ("利息費用",),
     "利息收入": ("利息收入",),
@@ -349,8 +372,9 @@ def query_params(stock_id: str, roc_year: int, season: int) -> dict[str, str]:
 def fetch(session: PoliteSession, day: dt.date, universe: Iterable[str] = ()) -> list[dict[str, Any]]:
     """Fetch every company's statements for the latest quarter due by `day`.
 
-    One raw dict per company bundles its pages (plus the previous season's
-    income page for Q4 and cash-flow page for Q2–Q4, needed to de-cumulate).
+    One raw dict per company bundles its pages, plus the previous season's
+    income and cash-flow pages for Q4 (the annual report is cumulative-only)
+    and the previous cash-flow page for Q2/Q3 (always cumulative).
     """
     year, season = latest_quarter_due(day)
     roc_year = year - 1911
@@ -389,8 +413,8 @@ def _empty_batch() -> pd.DataFrame:
 
 
 def _parse_number(value: Any, where: str, account: str) -> float | None:
-    """MOPS prints comma-grouped 千元 with a leading minus (or parentheses) for
-    negatives; blank cells are section headings or unreported items."""
+    """MOPS prints space-padded, comma-grouped 千元 with a leading minus (or
+    parentheses) for negatives; blank cells are section headings or unreported items."""
     if value is None:
         return None
     if isinstance(value, (float, np.floating)):
@@ -411,17 +435,24 @@ def _parse_number(value: Any, where: str, account: str) -> float | None:
     return -number if negative else number
 
 
-_INPUT_RE = re.compile(r"<input\b[^>]*>", re.IGNORECASE)
-_ATTR_RE = re.compile(r"""\b(name|value)\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
+# MOPS identifies the page through its XBRL link (CO_ID / SYEAR (西元) / SSEASON),
+# its e-book link (co_id / year (民國)) and the `民國115年第1季` table caption.
+_XBRL_LINK_RE = re.compile(r"CO_ID=(?P<co_id>\d+)&SYEAR=(?P<year>\d{4})&SSEASON=(?P<season>\d)")
+_EBOOK_LINK_RE = re.compile(r"co_id=(?P<co_id>\d+)&year=(?P<roc_year>\d{2,3})")
+_CAPTION_RE = re.compile(r"民國(?P<roc_year>\d{2,3})年第(?P<season>\d)季")
 
 
 def _check_identity(html: str, where: str, stock_id: str, roc_year: int, season: int) -> None:
-    """MOPS echoes the query as hidden inputs; they must name the company/period asked for."""
+    """The page must name the company and period asked for, wherever it says so."""
     announced: dict[str, str] = {}
-    for tag in _INPUT_RE.findall(html):
-        attrs = {k.lower(): v for k, v in _ATTR_RE.findall(tag)}
-        if attrs.get("name") in ("co_id", "year", "season") and "value" in attrs:
-            announced[attrs["name"]] = attrs["value"].strip()
+    if (m := _XBRL_LINK_RE.search(html)):
+        announced.update({"co_id": m["co_id"], "year": str(int(m["year"]) - 1911), "season": m["season"]})
+    if (m := _EBOOK_LINK_RE.search(html)):
+        announced.setdefault("co_id", m["co_id"])
+        announced.setdefault("year", str(int(m["roc_year"])))
+    if (m := _CAPTION_RE.search(html)):
+        announced.setdefault("year", str(int(m["roc_year"])))
+        announced.setdefault("season", m["season"])
     expected = {"co_id": stock_id, "year": str(roc_year), "season": str(season)}
     for key, value in expected.items():
         if key in announced and announced[key] != value:
@@ -442,42 +473,70 @@ def _check_unit(html: str, where: str) -> None:
         )
 
 
-def _statement_table(tables: list[pd.DataFrame]) -> pd.DataFrame | None:
-    for table in tables:
-        if len(table.columns) < 2:
-            continue
-        first = table.columns[0]
-        label = first[0] if isinstance(first, tuple) else first
-        if normalize_account(label) == ACCOUNT_COLUMN:
-            return table
+def _cell_text(cell: Any) -> str:
+    return cell.text_content().replace("\xa0", " ").strip()
+
+
+def _table_rows(table: Any) -> list[Any]:
+    return table.xpath("./tr | ./thead/tr | ./tbody/tr")
+
+
+def _find_statement_table(doc: Any) -> tuple[Any, int] | None:
+    """The table (and the index of its 會計項目 header row) holding the statement."""
+    for table in doc.iter("table"):
+        for index, row in enumerate(_table_rows(table)):
+            cells = row.xpath("./th")
+            if cells and normalize_account(_cell_text(cells[0])) == ACCOUNT_COLUMN:
+                return table, index
     return None
 
 
-def _statement_from_table(table: pd.DataFrame, where: str) -> _Statement:
-    periods: list[str] = []
+def _statement_from_table(table: Any, header_index: int, where: str) -> _Statement:
+    """Read the period header (colspans expanded), the 金額/% sub-header, then the
+    account rows; a label that appears twice (a section heading followed by its
+    indented value row) is merged position-wise, first non-empty value wins."""
+    rows = _table_rows(table)
+    header = rows[header_index].xpath("./th")
+    expanded: list[str] = []
+    for cell in header:
+        expanded += [_cell_text(cell)] * int(cell.get("colspan") or 1)
     positions: list[int] = []
-    for position, column in enumerate(table.columns):
-        if position == 0:
-            continue
-        if isinstance(column, tuple):
-            label, leaf = str(column[0]).strip(), str(column[-1]).strip()
-            if leaf == "%" or (leaf != label and leaf != AMOUNT_COLUMN):
-                continue
-        else:
-            label = str(column).strip()
-        if label in periods:
-            continue
-        periods.append(label)
-        positions.append(position)
+    periods: list[str] = []
+    sub_header = rows[header_index + 1].xpath("./th") if header_index + 1 < len(rows) else []
+    body_start = header_index + 1
+    if sub_header and not rows[header_index + 1].xpath("./td"):
+        body_start += 1
+        for position, cell in enumerate(sub_header):
+            if _cell_text(cell) == AMOUNT_COLUMN and position < len(expanded):
+                positions.append(position)
+    else:
+        positions = list(range(1, len(expanded)))
+    for position in positions:
+        label = expanded[position]
+        if label and label not in periods:
+            periods.append(label)
+    positions = positions[: len(periods)]
     if not periods:
         raise ParseError(f"{where}: statement table has no period columns — source format changed?")
-    rows: dict[str, tuple[float | None, ...]] = {}
-    for record in table.values.tolist():
-        account = normalize_account(record[0])
-        if not account or account in rows:
-            continue   # blank spacer, or a repeated label: the first occurrence wins
-        rows[account] = tuple(_parse_number(record[i], where, account) for i in positions)
-    return _Statement(tuple(periods), rows)
+    parsed: dict[str, list[float | None]] = {}
+    for row in rows[body_start:]:
+        cells = row.xpath("./td")
+        if not cells:
+            continue
+        account = normalize_account(_cell_text(cells[0]))
+        if not account:
+            continue
+        values = [
+            _parse_number(_cell_text(cells[p]), where, account) if p < len(cells) else None
+            for p in positions
+        ]
+        if account in parsed:
+            parsed[account] = [
+                old if old is not None else new for old, new in zip(parsed[account], values)
+            ]
+        else:
+            parsed[account] = values
+    return _Statement(tuple(periods), {k: tuple(v) for k, v in parsed.items()})
 
 
 def _read_statement(html: Any, statement: str, stock_id: str, roc_year: int,
@@ -488,18 +547,18 @@ def _read_statement(html: Any, statement: str, stock_id: str, roc_year: int,
         raise ParseError(f"{where}: empty page")
     _check_identity(html, where, stock_id, roc_year, season)
     try:
-        tables = pd.read_html(io.StringIO(html), thousands=None, keep_default_na=False)
-    except ValueError:   # "No tables found"
-        tables = []
-    table = _statement_table(tables)
-    if table is None:
+        doc = lxml_html.fromstring(html)
+    except (ValueError, lxml_etree.ParserError) as exc:
+        raise ParseError(f"{where}: not an HTML page: {exc}") from exc
+    found = _find_statement_table(doc)
+    if found is None:
         if any(marker in html for marker in NO_DATA_MARKERS):
             return None
         raise ParseError(
             f"{where}: no statement table with a {ACCOUNT_COLUMN!r} column — source format changed?"
         )
     _check_unit(html, where)
-    return _statement_from_table(table, where)
+    return _statement_from_table(*found, where)
 
 
 def _map_fields(lookup: dict[str, tuple[str, ...] | Sum],
@@ -521,13 +580,14 @@ def _minus(current: float | None, previous: float | None) -> float | None:
     return round((current or 0.0) - (previous or 0.0), 2)
 
 
-def _period_column(statement: _Statement, label: str, where: str) -> dict[str, float | None]:
-    if label not in statement.periods:
-        raise ParseError(
-            f"{where}: page has no {label!r} column (columns: {list(statement.periods)}) — "
-            f"MOPS served another period or changed layout"
-        )
-    return statement.column(label)
+def _period_column(statement: _Statement, labels: Iterable[str], where: str) -> dict[str, float | None]:
+    for label in labels:
+        if label in statement.periods:
+            return statement.column(label)
+    raise ParseError(
+        f"{where}: page has none of the {list(labels)!r} columns (columns: {list(statement.periods)}) — "
+        f"MOPS served another period or changed layout"
+    )
 
 
 def _previous(raw: dict[str, Any], key: str, statement: str, stock_id: str,
@@ -540,45 +600,51 @@ def _previous(raw: dict[str, Any], key: str, statement: str, stock_id: str,
     return _read_statement(raw[key], statement, stock_id, roc_year, season - 1)
 
 
+def _quarter_labels(roc_year: int, season: int) -> tuple[str, ...]:
+    """Three-month column: `115年第1季`."""
+    return (f"{roc_year}年第{season}季",)
+
+
+def _cumulative_labels(roc_year: int, season: int) -> tuple[str, ...]:
+    """Year-to-date column: `115年01月01日至115年06月30日`; the annual report prints `114年度`."""
+    end = quarter_end(roc_year + 1911, season)
+    ytd = f"{roc_year}年01月01日至{roc_year}年{end.month:02d}月{end.day:02d}日"
+    return (f"{roc_year}年度", ytd) if season == 4 else (ytd,)
+
+
 def _balance_sheet_fields(statement: _Statement, roc_year: int, season: int,
                           where: str) -> dict[str, float | None]:
     end = quarter_end(roc_year + 1911, season)
     label = f"{roc_year}年{end.month:02d}月{end.day:02d}日"
-    return _map_fields(_BALANCE_SHEET_LOOKUP, _period_column(statement, label, where))
+    return _map_fields(_BALANCE_SHEET_LOOKUP, _period_column(statement, (label,), where))
 
 
 def _income_fields(statement: _Statement, raw: dict[str, Any], stock_id: str,
                    roc_year: int, season: int, where: str) -> dict[str, float | None]:
-    quarter = f"{roc_year}年第{season}季"
-    if quarter in statement.periods:
-        return _map_fields(_INCOME_LOOKUP, statement.column(quarter))
-    cumulative = f"{roc_year}年{_CUMULATIVE_SUFFIX[season]}"
-    current = _map_fields(_INCOME_LOOKUP, _period_column(statement, cumulative, where))
+    quarter = _quarter_labels(roc_year, season)
+    if any(label in statement.periods for label in quarter):
+        return _map_fields(_INCOME_LOOKUP, _period_column(statement, quarter, where))
+    current = _map_fields(_INCOME_LOOKUP, _period_column(statement, _cumulative_labels(roc_year, season), where))
     if season == 1:
         return current
     previous = _previous(raw, "prev_income", "income", stock_id, roc_year, season)
     if previous is None:
         return current   # nothing filed earlier in the year: YTD is the whole history
-    prev_label = f"{roc_year}年{_CUMULATIVE_SUFFIX[season - 1]}"
-    prior = _map_fields(_INCOME_LOOKUP, _period_column(previous, prev_label, where + " (previous)"))
+    prior = _map_fields(_INCOME_LOOKUP, _period_column(
+        previous, _cumulative_labels(roc_year, season - 1), where + " (previous)"))
     return {field: _minus(current[field], prior[field]) for field in current}
-
-
-def _ytd_label(roc_year: int, season: int) -> str:
-    end = quarter_end(roc_year + 1911, season)
-    return f"{roc_year}年01月01日至{roc_year}年{end.month:02d}月{end.day:02d}日"
 
 
 def _cash_flow_fields(statement: _Statement, raw: dict[str, Any], stock_id: str,
                       roc_year: int, season: int, where: str) -> dict[str, float | None]:
-    current = _map_fields(_CASH_FLOW_LOOKUP, _period_column(statement, _ytd_label(roc_year, season), where))
+    current = _map_fields(_CASH_FLOW_LOOKUP, _period_column(statement, _cumulative_labels(roc_year, season), where))
     if season == 1:
         return current
     previous = _previous(raw, "prev_cash_flow", "cash_flow", stock_id, roc_year, season)
     if previous is None:
         return current
-    prior = _map_fields(_CASH_FLOW_LOOKUP,
-                        _period_column(previous, _ytd_label(roc_year, season - 1), where + " (previous)"))
+    prior = _map_fields(_CASH_FLOW_LOOKUP, _period_column(
+        previous, _cumulative_labels(roc_year, season - 1), where + " (previous)"))
     single: dict[str, float | None] = {}
     for field, value in current.items():
         if field in _CLOSING_BALANCE_FIELDS:
