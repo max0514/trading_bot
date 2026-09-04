@@ -14,7 +14,6 @@ import argparse
 import datetime as dt
 import logging
 from dataclasses import dataclass, field
-from typing import Literal
 
 import pandas as pd
 
@@ -22,15 +21,31 @@ from twlab import config, qa, registry
 from twlab.errors import TwlabError
 from twlab.http import PoliteSession
 from twlab.spec import DatasetSpec
+from twlab.status import PUBLISHED, RunStatus
 from twlab.store.mongo import MongoStore
 from twlab.store.parquet import ParquetStore
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["PUBLISHED", "RunResult", "RunStatus", "defaults", "materialize", "run",
+           "wide_frames"]
 
-RunStatus = Literal["ok", "quarantined", "no_data", "failed"]
-# Outcomes that count as "this batch day is done" for the Orchestrator.
-PUBLISHED = ("ok", "no_data")
+
+def defaults(
+    mongo: MongoStore | None,
+    store: ParquetStore | None,
+    now: dt.datetime | None,
+) -> tuple[MongoStore, ParquetStore, dt.datetime]:
+    """Resolve the three dependencies every entry point takes.
+
+    The system of record, the published store and the clock are optional
+    kwargs on `run`, `run_due`, `run_dataset` and `backfill` so tests can
+    inject a mongomock client, a tmp_path store and a frozen `now`. This is
+    that defaulting, written once instead of at each entry point.
+    """
+    return (mongo or MongoStore(),
+            store or ParquetStore(config.store_dir()),
+            now or dt.datetime.now())
 
 
 @dataclass(frozen=True)
@@ -40,6 +55,10 @@ class RunResult:
     status: RunStatus
     rows: int = 0
     failures: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # Callers (and tests) may pass the plain string a run log holds.
+        object.__setattr__(self, "status", RunStatus(self.status))
 
 
 def wide_frames(spec: DatasetSpec, long_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
@@ -90,13 +109,13 @@ def _run_derived(spec: DatasetSpec, day: dt.date, mongo: MongoStore,
         frames = spec.derive(store)
     except TwlabError as exc:
         logger.error("%s %s: derive failed: %s", spec.name, day, exc)
-        mongo.record_run(spec, day, "quarantined", now, detail=[f"derive: {exc}"])
-        return RunResult(spec.name, day, "quarantined", failures=[f"derive: {exc}"])
+        mongo.record_run(spec, day, RunStatus.QUARANTINED, now, detail=[f"derive: {exc}"])
+        return RunResult(spec.name, day, RunStatus.QUARANTINED, failures=[f"derive: {exc}"])
     rows = sum(len(f) for f in frames.values())
     store.write_frames(spec.name, frames, now=now, frequency=spec.frequency)
-    mongo.record_run(spec, day, "ok", now, rows=rows)
+    mongo.record_run(spec, day, RunStatus.OK, now, rows=rows)
     logger.info("%s %s: ok — derived %d fields", spec.name, day, len(frames))
-    return RunResult(spec.name, day, "ok", rows=rows)
+    return RunResult(spec.name, day, RunStatus.OK, rows=rows)
 
 
 def run(
@@ -115,44 +134,48 @@ def run(
     derives its period from it).
     """
     spec = registry.get_spec(dataset)
-    mongo = mongo or MongoStore()
-    store = store or ParquetStore(config.store_dir())
-    now = now or dt.datetime.now()
+    mongo, store, now = defaults(mongo, store, now)
 
     if spec.is_derived:
         return _run_derived(spec, day, mongo, store, now)
 
     session = session or PoliteSession()
-    raws = spec.fetch(session, day, **_fetch_kwargs(spec, store))
+    kwargs = _fetch_kwargs(spec, store)
+    raws = spec.fetch(session, day, **kwargs)
     try:
         parts = [spec.parse(raw) for raw in raws]
     except TwlabError as exc:
         logger.error("%s %s: parse failed: %s", dataset, day, exc)
-        mongo.record_run(spec, day, "quarantined", now, detail=[f"parse: {exc}"])
-        return RunResult(dataset, day, "quarantined", failures=[f"parse: {exc}"])
+        mongo.record_run(spec, day, RunStatus.QUARANTINED, now, detail=[f"parse: {exc}"])
+        return RunResult(dataset, day, RunStatus.QUARANTINED, failures=[f"parse: {exc}"])
 
     # Drop empty halves (a market's holiday) so concat keeps the typed dtypes.
     parts = [p for p in parts if not p.empty]
     batch = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     if batch.empty:
-        mongo.record_run(spec, day, "no_data", now)
-        return RunResult(dataset, day, "no_data")
+        mongo.record_run(spec, day, RunStatus.NO_DATA, now)
+        return RunResult(dataset, day, RunStatus.NO_DATA)
+
+    if spec.universe_from is not None:
+        # A per-company source: one raw per company the fetch asked about, so
+        # the QA gate can judge coverage rather than an absolute row count.
+        batch.attrs[qa.REQUESTED] = len(raws)
 
     rows = len(batch)
     failures = qa.run_invariants(list(spec.invariants), batch)
     if failures:
         logger.error("%s %s: quarantined: %s", dataset, day, failures)
         mongo.quarantine_batch(spec, batch, day, now)
-        mongo.record_run(spec, day, "quarantined", now, rows=rows, detail=failures)
-        return RunResult(dataset, day, "quarantined", rows=rows, failures=failures)
+        mongo.record_run(spec, day, RunStatus.QUARANTINED, now, rows=rows, detail=failures)
+        return RunResult(dataset, day, RunStatus.QUARANTINED, rows=rows, failures=failures)
 
     upsert = mongo.upsert_batch(spec, batch)
     materialize(spec, mongo, store, now)
-    mongo.record_run(spec, day, "ok", now, rows=rows)
+    mongo.record_run(spec, day, RunStatus.OK, now, rows=rows)
     logger.info(
         "%s %s: ok — %d rows (%d new)", dataset, day, rows, upsert.upserted
     )
-    return RunResult(dataset, day, "ok", rows=rows)
+    return RunResult(dataset, day, RunStatus.OK, rows=rows)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -171,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{result.dataset} {result.day}: {result.status}"
           + (f" ({result.rows} rows)" if result.rows else "")
           + (f" — {result.failures}" if result.failures else ""))
-    return 0 if result.status in PUBLISHED else 1
+    return 0 if result.status.published else 1
 
 
 if __name__ == "__main__":

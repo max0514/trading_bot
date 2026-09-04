@@ -5,7 +5,7 @@ so re-runs and overlapping backfills never duplicate rows. Only batches that
 passed the QA gate reach a Dataset's collection; a Quarantined batch is kept
 as evidence in the `quarantine` collection and never overwrites published
 rows, so it cannot leak into Wide Frames through a later materialization.
-Run outcomes (ok / quarantined / no_data / failed, witness_*) are logged to
+Run outcomes (`RunStatus`: ok / no_data / quarantined / failed, witness_*) are logged to
 the `runs` collection, which the Orchestrator and dashboard query.
 """
 from __future__ import annotations
@@ -20,6 +20,7 @@ from pymongo import DESCENDING, MongoClient, UpdateOne
 
 from twlab import config
 from twlab.spec import DatasetSpec
+from twlab.status import PUBLISHED, RunStatus
 
 RUNS = "runs"
 QUARANTINE = "quarantine"
@@ -113,16 +114,18 @@ class MongoStore:
         self,
         spec: DatasetSpec,
         day: dt.date,
-        status: str,
+        status: RunStatus | str,
         now: dt.datetime,
         rows: int = 0,
         detail: list[str] | None = None,
     ) -> None:
+        """Log one outcome. The status goes through `RunStatus`, so the run
+        log can only ever hold a status the rest of the platform knows."""
         self._db[RUNS].insert_one(
             {
                 "dataset": spec.name,
                 "day": dt.datetime.combine(day, dt.time()),
-                "status": status,
+                "status": RunStatus(status).value,
                 "rows": rows,
                 "detail": detail or [],
                 "at": now,
@@ -140,14 +143,14 @@ class MongoStore:
     def last_ok_day(self, dataset: str) -> dt.date | None:
         """The latest batch day this Dataset was published for (status ok)."""
         doc = self._db[RUNS].find_one(
-            {"dataset": dataset, "status": "ok"}, sort=[("day", DESCENDING)]
+            {"dataset": dataset, "status": RunStatus.OK.value}, sort=[("day", DESCENDING)]
         )
         return doc["day"].date() if doc else None
 
     def last_ok_at(self, dataset: str) -> dt.datetime | None:
         """When this Dataset last published (status ok), by run time."""
         doc = self._db[RUNS].find_one(
-            {"dataset": dataset, "status": "ok"}, sort=[("at", DESCENDING)]
+            {"dataset": dataset, "status": RunStatus.OK.value}, sort=[("at", DESCENDING)]
         )
         return doc["at"] if doc else None
 
@@ -156,9 +159,10 @@ class MongoStore:
         doc = self._db[RUNS].find_one({"dataset": dataset}, sort=[("day", 1)])
         return doc["day"].date() if doc else None
 
-    def has_run(self, dataset: str, day: dt.date, statuses: tuple[str, ...] = ("ok", "no_data")) -> bool:
+    def has_run(self, dataset: str, day: dt.date,
+                statuses: tuple[RunStatus | str, ...] = PUBLISHED) -> bool:
         return self._db[RUNS].count_documents({
             "dataset": dataset,
             "day": dt.datetime.combine(day, dt.time()),
-            "status": {"$in": list(statuses)},
+            "status": {"$in": [RunStatus(s).value for s in statuses]},
         }) > 0

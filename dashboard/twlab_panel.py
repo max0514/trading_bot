@@ -23,7 +23,7 @@ import dash_bootstrap_components as dbc
 from dash import Input, Output, callback, html
 
 from twlab import orchestrator, registry
-from twlab.pipeline import PUBLISHED
+from twlab.status import RunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -36,18 +36,20 @@ LEGACY_TO_TWLAB = {
     "quarterly_report": "financial_statement",
 }
 
-# Orchestrator status → (badge text, badge css class)
-_BADGES = {
-    "ok": ("Published", "badge badge-success"),
-    "witness_ok": ("Witness OK", "badge badge-success"),
-    "no_data": ("No data", "badge badge-idle"),
-    "never": ("Never run", "badge badge-idle"),
-    "quarantined": ("Quarantined", "badge badge-error"),
-    "failed": ("Failed", "badge badge-error"),
-    "witness_alert": ("Witness alert", "badge badge-error"),
-    "unavailable": ("Mongo unavailable", "badge badge-error"),
-    "running": ("Running", "badge badge-running"),
+# RunStatus → (badge text, badge css class). Every member has a badge, so a
+# status the platform can produce can never fall through to a bare label.
+_BADGES: dict[RunStatus, tuple[str, str]] = {
+    RunStatus.OK: ("Published", "badge badge-success"),
+    RunStatus.WITNESS_OK: ("Witness OK", "badge badge-success"),
+    RunStatus.NO_DATA: ("No data", "badge badge-idle"),
+    RunStatus.NEVER: ("Never run", "badge badge-idle"),
+    RunStatus.QUARANTINED: ("Quarantined", "badge badge-error"),
+    RunStatus.FAILED: ("Failed", "badge badge-error"),
+    RunStatus.WITNESS_ALERT: ("Witness alert", "badge badge-error"),
+    RunStatus.UNAVAILABLE: ("Mongo unavailable", "badge badge-error"),
+    RunStatus.RUNNING: ("Running", "badge badge-running"),
 }
+assert set(_BADGES) == set(RunStatus), "every RunStatus needs a badge"
 
 
 class PipelineTriggers:
@@ -109,7 +111,7 @@ class PipelineTriggers:
             self._add_log(name, "run started")
             try:
                 result = self._run_dataset(name)
-                level = "INFO" if result.status in PUBLISHED else "ERROR"
+                level = "INFO" if result.status.published else "ERROR"
                 self._add_log(name, self._describe(result), level=level)
             except Exception as exc:  # noqa: BLE001 — surface, never crash the UI
                 logger.exception("twlab run %s failed", name)
@@ -132,7 +134,7 @@ class PipelineTriggers:
                 if not results:
                     self._add_log("orchestrator", "nothing was due")
                 for result in results:
-                    level = "INFO" if result.status in PUBLISHED else "ERROR"
+                    level = "INFO" if result.status.published else "ERROR"
                     self._add_log(result.dataset, self._describe(result), level=level)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("twlab run-due failed")
@@ -148,7 +150,7 @@ class PipelineTriggers:
         try:
             rows = self._status()
         except Exception as exc:  # noqa: BLE001 — Mongo down: show it, don't crash
-            rows = [{"dataset": n, "cadence": "", "status": "unavailable", "day": None,
+            rows = [{"dataset": n, "cadence": "", "status": RunStatus.UNAVAILABLE, "day": None,
                      "rows": 0, "detail": [str(exc)[:200]], "last_ok_day": None}
                     for n in self.names()]
         for row in rows:
@@ -193,15 +195,18 @@ def twlab_card(runner: PipelineTriggers) -> dbc.Card:
 
 def badge_for(row: dict[str, Any]) -> tuple[str, str]:
     if row.get("running"):
-        return _BADGES["running"]
-    return _BADGES.get(row["status"], (row["status"], "badge badge-idle"))
+        return _BADGES[RunStatus.RUNNING]
+    try:
+        return _BADGES[RunStatus(row["status"])]
+    except ValueError:                       # a run log row this version predates
+        return str(row["status"]), "badge badge-idle"
 
 
 def legacy_row_status(rows_by_dataset: dict[str, dict[str, Any]], legacy_name: str) -> tuple[str, str, str]:
     """(badge text, badge class, progress text) for a re-pointed legacy button."""
     row = rows_by_dataset.get(LEGACY_TO_TWLAB[legacy_name])
     if row is None:
-        return _BADGES["never"] + ("",)
+        return _BADGES[RunStatus.NEVER] + ("",)
     text, css = badge_for(row)
     return text, css, day_text(row)
 

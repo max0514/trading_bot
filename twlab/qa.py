@@ -13,6 +13,11 @@ import pandas as pd
 
 Check = Callable[[pd.DataFrame], str | None]  # None = pass, str = failure detail
 
+# `batch.attrs` key: how many Stock IDs the fetch asked the Official Source
+# about, set by the pipeline for per-company sources (DatasetSpec.universe_from).
+# Market-wide sources answer one file for everybody, so they never set it.
+REQUESTED = "requested"
+
 
 @dataclass(frozen=True)
 class Invariant:
@@ -40,9 +45,14 @@ def unique_key(key_fields: list[str]) -> Invariant:
 
 
 def min_rows(n: int) -> Invariant:
-    """Row-count floor standing in for the Trading Calendar check until the
-    calendar Dataset lands: a daily all-market batch far below the typical
-    security count means a truncated or partial scrape."""
+    """Absolute row-count floor for a market-wide source: a daily all-market
+    batch far below the typical security count means a truncated or partial
+    scrape.
+
+    This is a stand-in for the Trading Calendar row-count Invariant story 16
+    asks for — a fixed number, not the exchange's own count of what should
+    have traded that day. It stays until the calendar Dataset lands.
+    """
 
     def check(batch: pd.DataFrame) -> str | None:
         if len(batch) < n:
@@ -50,6 +60,32 @@ def min_rows(n: int) -> Invariant:
         return None
 
     return Invariant("min_rows", check)
+
+
+def min_coverage(fraction: float) -> Invariant:
+    """Row floor for a per-company source, as a share of the universe asked for.
+
+    `min_rows` cannot serve here: the batch is one row per company that
+    answered, so its size follows a universe that grows with the market and
+    shrinks as you backfill into the past. Instead the pipeline records how
+    many companies the fetch asked about in `batch.attrs[REQUESTED]`, and the
+    floor is relative to that — so a MOPS outage answering 「查無所需資料」 for
+    all but a handful of companies Quarantines instead of publishing as `ok`.
+
+    Batches from market-wide sources carry no such count and are left to
+    `min_rows`.
+    """
+
+    def check(batch: pd.DataFrame) -> str | None:
+        requested = batch.attrs.get(REQUESTED)
+        if not requested:
+            return None       # not a per-company source: min_rows applies
+        if len(batch) < fraction * requested:
+            return (f"only {len(batch)} rows from {requested} companies asked "
+                    f"({len(batch) / requested:.0%}), expected at least {fraction:.0%}")
+        return None
+
+    return Invariant("min_coverage", check)
 
 
 def non_negative(fields: list[str]) -> Invariant:

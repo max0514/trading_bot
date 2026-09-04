@@ -21,8 +21,9 @@ from typing import Any, Callable, Iterable
 
 from twlab import config, pipeline, registry
 from twlab.http import PoliteSession
-from twlab.pipeline import PUBLISHED, RunResult
+from twlab.pipeline import RunResult
 from twlab.spec import DatasetSpec
+from twlab.status import PUBLISHED, RunStatus
 from twlab.store.mongo import MongoStore
 from twlab.store.parquet import ParquetStore
 
@@ -152,8 +153,9 @@ def execute(due: list[Due], runner: RunFn, mongo: MongoStore,
         except Exception as exc:  # noqa: BLE001 — isolate every Dataset from the others
             logger.exception("%s %s: failed", item.dataset, item.day)
             detail = f"{type(exc).__name__}: {exc}"
-            mongo.record_run(specs[item.dataset], item.day, "failed", now, detail=[detail])
-            result = RunResult(item.dataset, item.day, "failed", failures=[detail])
+            mongo.record_run(specs[item.dataset], item.day, RunStatus.FAILED, now,
+                             detail=[detail])
+            result = RunResult(item.dataset, item.day, RunStatus.FAILED, failures=[detail])
         results.append(result)
         logger.info("%s %s: %s%s", result.dataset, result.day, result.status,
                     f" ({result.rows} rows)" if result.rows else "")
@@ -170,9 +172,7 @@ def run_due(now: dt.datetime | None = None, *,
             runner: RunFn | None = None) -> list[RunResult]:
     """The nightly entry point: scraped Datasets first, then the derived
     ones whose inputs just published."""
-    now = now or dt.datetime.now()
-    mongo = mongo or MongoStore()
-    store = store or ParquetStore(config.store_dir())
+    mongo, store, now = pipeline.defaults(mongo, store, now)
     specs = specs if specs is not None else registry.all_specs()
     runner = runner or default_runner(session=session, mongo=mongo, store=store, now=now)
     results = execute(plan(now, mongo, specs=specs, only=only, max_catchup=max_catchup,
@@ -190,9 +190,7 @@ def run_dataset(dataset: str, day: dt.date | None = None, *,
                 now: dt.datetime | None = None) -> RunResult:
     """Manual single-Dataset run (dashboard button / `run --dataset`), same path
     as the nightly job. Without `day`, the latest due day is used."""
-    now = now or dt.datetime.now()
-    mongo = mongo or MongoStore()
-    store = store or ParquetStore(config.store_dir())
+    mongo, store, now = pipeline.defaults(mongo, store, now)
     spec = registry.get_spec(dataset)
     if day is None:
         lookback = _FRESH_LOOKBACK_DAYS[spec.cadence.kind]
@@ -212,9 +210,7 @@ def backfill(dataset: str, start: dt.date | None = None, end: dt.date | None = N
     """Walk every due day of a Dataset's Cadence in [start, end], oldest first,
     skipping days already published. Failures are recorded and skipped.
     `start` defaults to the Registry's backfill_start (the archive's depth)."""
-    now = now or dt.datetime.now()
-    mongo = mongo or MongoStore()
-    store = store or ParquetStore(config.store_dir())
+    mongo, store, now = pipeline.defaults(mongo, store, now)
     specs = specs if specs is not None else registry.all_specs()
     spec = specs[dataset]
     start = start or spec.backfill_start
@@ -238,7 +234,7 @@ def status(mongo: MongoStore | None = None, *,
         rows.append({
             "dataset": name,
             "cadence": specs[name].cadence.kind,
-            "status": latest["status"] if latest else "never",
+            "status": RunStatus(latest["status"]) if latest else RunStatus.NEVER,
             "day": latest["day"].date() if latest else None,
             "at": latest["at"] if latest else None,
             "rows": latest["rows"] if latest else 0,
@@ -249,6 +245,16 @@ def status(mongo: MongoStore | None = None, *,
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
+
+def _run_witness(now: dt.datetime, **kwargs) -> list:
+    """The Witness against the live store — the `witness` command and
+    `run --witness` ask for the same thing."""
+    from twlab import witness
+    return witness.run_witness(
+        ParquetStore(config.store_dir()), MongoStore(),
+        witness.FinMindClient(PoliteSession(), config.finmind_token()),
+        now=now, **kwargs)
+
 
 def _print_status(rows: list[dict[str, Any]]) -> None:
     print(f"{'dataset':42s} {'cadence':9s} {'status':14s} {'day':10s} {'last ok':10s} rows")
@@ -290,15 +296,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "backfill":
         results = backfill(args.dataset, args.start, args.end)
-        bad = [r for r in results if r.status not in PUBLISHED]
+        bad = [r for r in results if not r.status.published]
         print(f"{args.dataset}: {len(results)} batches, {len(bad)} not published")
         return 1 if bad else 0
     if args.command == "witness":
-        from twlab import witness
-        reports = witness.run_witness(ParquetStore(config.store_dir()), MongoStore(),
-                                      witness.FinMindClient(PoliteSession(), config.finmind_token()),
-                                      now=dt.datetime.now(), only=args.dataset,
-                                      samples=args.samples)
+        reports = _run_witness(dt.datetime.now(), only=args.dataset, samples=args.samples)
         for r in reports:
             print(r.summary())
         return 1 if any(r.mismatches for r in reports) else 0
@@ -307,12 +309,9 @@ def main(argv: list[str] | None = None) -> int:
     for r in results:
         print(f"{r.dataset} {r.day}: {r.status}" + (f" — {r.failures}" if r.failures else ""))
     if args.witness:
-        from twlab import witness
-        for r in witness.run_witness(ParquetStore(config.store_dir()), MongoStore(),
-                                     witness.FinMindClient(PoliteSession(), config.finmind_token()),
-                                     now=args.now or dt.datetime.now()):
+        for r in _run_witness(args.now or dt.datetime.now()):
             print(r.summary())
-    return 1 if any(r.status in ("failed", "quarantined") for r in results) else 0
+    return 1 if any(not r.status.published for r in results) else 0
 
 
 if __name__ == "__main__":
