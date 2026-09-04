@@ -5,7 +5,9 @@ Official Sources: TWSE T86 (三大法人買賣超日報, 上市) and TPEx insti/
 investor groups' 買進 / 賣出 / 買賣超 share counts, in 股.
 
 T86 names every column (FinLab copied its names), so Fields are located BY
-NAME and a renamed or vanished column raises ParseError. T86 also publishes
+NAME through `twlab.sources` — which also owns the envelope, the placeholder
+set and the date spellings — and a renamed or vanished column raises
+ParseError. T86 also publishes
 two totals (自營商買賣超股數, 三大法人買賣超股數) that are not Catalog Fields;
 they are left out. TPEx publishes a flat header — 代號, 名稱, then seven
 unnamed (買進股數, 賣出股數, 買賣超股數) triples and a 合計 — where only the
@@ -19,14 +21,14 @@ group on every row — exactly what a misaligned source column breaks.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
 
-from twlab import qa
+from twlab import qa, sources
 from twlab.errors import ParseError
 from twlab.http import PoliteSession
+from twlab.sources import SourceTable
 from twlab.spec import Cadence, DatasetSpec
 
 TWSE_URL = "https://www.twse.com.tw/rwd/zh/fund/T86"
@@ -49,18 +51,12 @@ INT_FIELDS = set(FIELDS)
 BUY_SELL_FIELDS = [field for buy, sell, _net in GROUPS.values() for field in (buy, sell)]
 
 
-@dataclass(frozen=True)
-class SourceTable:
-    """How one Official Source's 三大法人 table maps onto the Dataset's Fields."""
-    market: str                    # value for the batch's market column
-    id_column: str                 # source column holding the Stock ID
-    column_map: dict[str, str]     # source column name -> Field name
-
-
 _TWSE_TABLE = SourceTable(
     market="TWSE",
     id_column="證券代號",
     column_map={f: f for f in FIELDS},  # T86 already uses FinLab's names
+    parse_value=sources.parse_int,
+    what="三大法人 table",
 )
 
 # TPEx's flat header: 代號, 名稱, seven (買進股數, 賣出股數, 買賣超股數) triples, 合計.
@@ -75,6 +71,12 @@ TPEX_GROUP_ORDER = (
     "投信", "自營商(自行買賣)", "自營商(避險)", "自營商合計",
 )
 TPEX_HEADER = [TPEX_ID_COLUMN, TPEX_NAME_COLUMN, *(TPEX_TRIPLE * len(TPEX_GROUP_ORDER)), TPEX_TOTAL_COLUMN]
+# Only used to LOCATE the table: TPEx repeats 買進股數 seven times, so the
+# Fields are read by position below rather than through `column_map`.
+_TPEX_TABLE = SourceTable(
+    market="TPEx", id_column=TPEX_ID_COLUMN, column_map={},
+    parse_value=sources.parse_int, what="三大法人 table",
+)
 
 
 def fetch(session: PoliteSession, day: dt.date) -> list[dict[str, Any]]:
@@ -116,94 +118,16 @@ def parse(raw: dict[str, Any]) -> pd.DataFrame:
     raise ParseError(f"unknown raw payload source {source!r}")
 
 
-def _empty_batch() -> pd.DataFrame:
-    return pd.DataFrame(columns=["stock_id", "date", "market", *FIELDS])
-
-
-_NA_TEXTS = {"", "-", "--", "---", "----", "N/A"}
-
-
-def _parse_int(value: Any) -> int | None:
-    """Share counts are comma-grouped and signed (買賣超); dashes mean N/A.
-
-    Anything else — including a fractional count — is source drift, not data.
-    """
-    if value is None:
-        return None
-    text = str(value).strip().replace(",", "")
-    if text in _NA_TEXTS:
-        return None
-    try:
-        return int(text)
-    except ValueError as exc:
-        raise ParseError(f"unparseable share count {value!r}") from exc
-
-
-def _parse_date(text: str, source: str) -> pd.Timestamp:
-    """'20260902', '2026/09/02' or the ROC form '115/09/02' → Timestamp."""
-    parts = text.strip().split("/")
-    try:
-        if len(parts) == 3 and len(parts[0]) <= 3:          # ROC calendar year
-            return pd.Timestamp(dt.date(int(parts[0]) + 1911, int(parts[1]), int(parts[2])))
-        return pd.Timestamp(dt.datetime.strptime("".join(parts), "%Y%m%d").date())
-    except ValueError as exc:
-        raise ParseError(f"{source}: unparseable payload date {text!r}") from exc
-
-
-def _rows_from_table(
-    fields: list[str], data: list[list[Any]], spec: SourceTable, date: pd.Timestamp
-) -> pd.DataFrame:
-    fields = [str(f).strip() for f in fields]
-    missing = [c for c in (spec.id_column, *spec.column_map) if c not in fields]
-    if missing:
-        raise ParseError(
-            f"{spec.market}: expected columns missing from 三大法人 table: {missing} "
-            f"(got {fields}) — source format changed?"
-        )
-    index_of = {
-        name: fields.index(name) for name in (spec.id_column, *spec.column_map)
-    }
-    records = []
-    for row in data:
-        if len(row) < len(fields):
-            raise ParseError(
-                f"{spec.market}: row has {len(row)} cells under a {len(fields)}-column "
-                f"header: {row[:2]} — source format changed?"
-            )
-        record: dict[str, Any] = {
-            "stock_id": str(row[index_of[spec.id_column]]).strip(),
-            "date": date,
-            "market": spec.market,
-        }
-        for src_name, field in spec.column_map.items():
-            record[field] = _parse_int(row[index_of[src_name]])
-        records.append(record)
-    return pd.DataFrame(records, columns=["stock_id", "date", "market", *FIELDS])
-
-
 def _parse_twse(payload: dict) -> pd.DataFrame:
     """T86 is a single rwd table: stat / date / fields / data at the top level."""
     stat = str(payload.get("stat", ""))
     if stat != "OK":
-        # TWSE answers a polite "no data" stat on non-trading days.
-        if "沒有符合條件" in stat or "查無資料" in stat:
-            return _empty_batch()
+        if sources.is_no_data(stat):        # a non-trading day, politely put
+            return sources.empty_batch(FIELDS)
         raise ParseError(f"TWSE: unexpected stat {stat!r}")
-    date = _parse_date(str(payload.get("date", "")), "TWSE")
-    return _rows_from_table(
-        payload.get("fields") or [], payload.get("data") or [], _TWSE_TABLE, date
-    )
-
-
-def _find_tpex_table(payload: dict) -> dict:
-    for table in payload.get("tables", []):
-        fields = [str(f).strip() for f in (table.get("fields") or [])]
-        if TPEX_ID_COLUMN in fields:
-            return {**table, "fields": fields}
-    raise ParseError(
-        f"TPEx: no table with a {TPEX_ID_COLUMN!r} column — source format "
-        f"changed? tables: {[str(t.get('title'))[:30] for t in payload.get('tables', [])]}"
-    )
+    date = sources.parse_date(payload.get("date", ""), "TWSE")
+    table = sources.find_table(payload, _TWSE_TABLE)
+    return sources.rows_from_table(table, _TWSE_TABLE, date)
 
 
 def _check_tpex_arithmetic(stock_id: str, triples: list[tuple], total: int | None) -> None:
@@ -228,7 +152,7 @@ def _parse_tpex(payload: dict) -> pd.DataFrame:
     stat = str(payload.get("stat", ""))
     if stat.lower() != "ok":
         raise ParseError(f"TPEx: unexpected stat {stat!r}")
-    table = _find_tpex_table(payload)
+    table = sources.find_table(payload, _TPEX_TABLE)
     if table["fields"] != TPEX_HEADER:
         raise ParseError(
             f"TPEx: header is not {TPEX_ID_COLUMN}/{TPEX_NAME_COLUMN} + "
@@ -236,8 +160,8 @@ def _parse_tpex(payload: dict) -> pd.DataFrame:
             f"{table['fields']} — source format changed?"
         )
     if not table.get("data"):
-        return _empty_batch()  # non-trading day
-    date = _parse_date(str(table.get("date") or payload.get("date", "")), "TPEx")
+        return sources.empty_batch(FIELDS)  # non-trading day
+    date = sources.parse_date(table.get("date") or payload.get("date", ""), "TPEx")
     first_value = len((TPEX_ID_COLUMN, TPEX_NAME_COLUMN))
     records = []
     for row in table["data"]:
@@ -248,17 +172,17 @@ def _parse_tpex(payload: dict) -> pd.DataFrame:
             )
         stock_id = str(row[0]).strip()
         triples = [
-            tuple(_parse_int(row[first_value + 3 * k + j]) for j in range(3))
+            tuple(sources.parse_int(row[first_value + 3 * k + j]) for j in range(3))
             for k in range(len(TPEX_GROUP_ORDER))
         ]
-        total = _parse_int(row[first_value + 3 * len(TPEX_GROUP_ORDER)])
+        total = sources.parse_int(row[first_value + 3 * len(TPEX_GROUP_ORDER)])
         _check_tpex_arithmetic(stock_id, triples, total)
         record: dict[str, Any] = {"stock_id": stock_id, "date": date, "market": "TPEx"}
         for group, triple in zip(TPEX_GROUP_ORDER, triples):
             if group in GROUPS:                     # subtotal triples are not Fields
                 record.update(zip(GROUPS[group], triple))
         records.append(record)
-    return pd.DataFrame(records, columns=["stock_id", "date", "market", *FIELDS])
+    return pd.DataFrame(records, columns=sources.batch_columns(FIELDS))
 
 
 def net_equals_buy_minus_sell() -> qa.Invariant:
@@ -298,7 +222,7 @@ SPECS = [
         int_fields=frozenset(INT_FIELDS),
         key_fields=("stock_id", "date"),
         invariants=(
-            qa.required_columns(["stock_id", "date", "market", *FIELDS]),
+            qa.required_columns(sources.batch_columns(FIELDS)),
             qa.unique_key(["stock_id", "date"]),
             # ~1,100+ 上市 and ~700 上櫃 securities see institutional flow on a
             # normal day; far fewer means a truncated scrape or a missing market.

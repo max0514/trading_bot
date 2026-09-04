@@ -13,7 +13,7 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from twlab import catalog, data, pipeline
+from twlab import catalog, data, pipeline, sources
 from twlab.dataframe import FinlabDataFrame
 from twlab.datasets import institutional_investors_trading_summary as insti
 from twlab.errors import ParseError
@@ -160,23 +160,23 @@ def test_unknown_source_rejected():
 
 
 def test_share_counts_parse_as_signed_integers():
-    assert insti._parse_int("26,004,465") == 26_004_465
-    assert insti._parse_int("-58,090") == -58_090
-    assert insti._parse_int("0") == 0
-    assert insti._parse_int("--") is None
-    assert insti._parse_int("") is None
+    assert sources.parse_int("26,004,465") == 26_004_465
+    assert sources.parse_int("-58,090") == -58_090
+    assert sources.parse_int("0") == 0
+    assert sources.parse_int("--") is None
+    assert sources.parse_int("") is None
     with pytest.raises(ParseError):
-        insti._parse_int("12a4")
+        sources.parse_int("12a4")
     with pytest.raises(ParseError):
-        insti._parse_int("1,234.5")   # a fractional share count is drift, not data
+        sources.parse_int("1,234.5")   # a fractional share count is drift, not data
 
 
 def test_dates_parse_in_twse_and_roc_forms():
-    assert insti._parse_date("20260902", "TWSE") == pd.Timestamp("2026-09-02")
-    assert insti._parse_date("2026/09/02", "TPEx") == pd.Timestamp("2026-09-02")
-    assert insti._parse_date("115/09/02", "TPEx") == pd.Timestamp("2026-09-02")
+    assert sources.parse_date("20260902", "TWSE") == pd.Timestamp("2026-09-02")
+    assert sources.parse_date("2026/09/02", "TPEx") == pd.Timestamp("2026-09-02")
+    assert sources.parse_date("115/09/02", "TPEx") == pd.Timestamp("2026-09-02")
     with pytest.raises(ParseError):
-        insti._parse_date("115/13/02", "TPEx")
+        sources.parse_date("115/13/02", "TPEx")
 
 
 # ── Seam 2: pipeline ───────────────────────────────────────────────────────

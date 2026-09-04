@@ -30,7 +30,10 @@ TPEx pads names with spaces and names several columns differently from the
 Catalog (漲停價 / 開始交易基準價 / 每仟股無償配股 …, mapped by name below);
 placeholders (`--`, blank) mean missing for text as well as numbers; and
 TWT49U appends the static MOPS link to the 季別 cell
-(`115年第2季(https://mops.twse.com.tw/…)`), which is stripped.
+(`115年第2季(https://mops.twse.com.tw/…)`), which is stripped. All of that —
+the placeholder set, the three date spellings, the header normalisation —
+lives in `twlab.sources`; only the per-row Field typing and the ratio below
+are specific to these six Datasets.
 
 Each fetch asks for the trailing 31-day window ending on the batch day:
 events are announced ahead, windows overlap, and upserts are idempotent.
@@ -38,14 +41,13 @@ events are announced ahead, windows overlap, and upserts are idempotent.
 from __future__ import annotations
 
 import datetime as dt
-import re
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
 
 import pandas as pd
 
-from twlab import qa
+from twlab import qa, sources
 from twlab.errors import ParseError
 from twlab.http import PoliteSession
 from twlab.spec import Cadence, DatasetSpec
@@ -59,10 +61,6 @@ WINDOW_DAYS = 31
 DIVIDEND_RATIO_RANGE = (0.2, 3.0)            # 緯穎's 2026 200% stock dividend is 0.335
 CAPITAL_REDUCTION_RATIO_RANGE = (0.5, 30.0)
 PAR_VALUE_RATIO_RANGE = (0.005, 200.0)       # 面額 10 → 0.5 is exactly 0.05
-
-_MISSING = {"", "-", "--", "---", "N/A", "—"}
-_TRAILING_LINK_RE = re.compile(r"\s*\(https?://[^)]*\)\s*$")
-_DATE_RE = re.compile(r"^(\d{2,4})\s*[年/.\-]\s*(\d{1,2})\s*[月/.\-]\s*(\d{1,2})\s*日?$")
 
 
 @dataclass(frozen=True)
@@ -120,7 +118,9 @@ TABLES: dict[str, EventTable] = {t.name: t for t in (
         column_map={
             **_same("除權息前收盤價", "除權息參考價", "權值", "息值"),
             "權值+息值": "權+息值",
-            "權/息": "權息",   # TPEx prints text (除息/除權/除權息); the Catalog types it float
+            # TPEx prints text (除息/除權/除權息) where the Catalog types this
+            # float — a deliberate deviation, see docs/catalog-deviations.md.
+            "權/息": "權息",
             "漲停價": "漲停價格",
             "跌停價": "跌停價格",
             "開始交易基準價": "開盤競價基準",
@@ -231,62 +231,18 @@ def parse(raw: dict[str, Any]) -> pd.DataFrame:
 
 
 def _empty_batch(table: EventTable) -> pd.DataFrame:
-    return pd.DataFrame(columns=["stock_id", "date", "market", *table.fields])
-
-
-def _normalize(name: Any) -> str:
-    return re.sub(r"\s+", " ", str(name)).strip()
-
-
-def _parse_number(value: Any) -> float | None:
-    """Comma-grouped number strings; '--'-style placeholders mean N/A."""
-    if value is None:
-        return None
-    text = str(value).strip().replace(",", "")
-    if text in _MISSING:
-        return None
-    try:
-        return float(text)
-    except ValueError as exc:
-        raise ParseError(f"unparseable number {value!r}") from exc
-
-
-def _parse_date(value: Any) -> pd.Timestamp:
-    """ROC dates as TWSE (115年06月11日) and TPEx (115/06/11, 1150611) print
-    them; Gregorian forms are accepted too."""
-    text = str(value).strip()
-    m = _DATE_RE.match(text)
-    if m:
-        year, month, day = (int(g) for g in m.groups())
-    elif text.isdigit() and len(text) in (7, 8):
-        year, month, day = int(text[:-4]), int(text[-4:-2]), int(text[-2:])
-    else:
-        raise ParseError(f"unparseable date {value!r}")
-    if year < 1911:
-        year += 1911
-    try:
-        return pd.Timestamp(dt.date(year, month, day))
-    except ValueError as exc:
-        raise ParseError(f"unparseable date {value!r}") from exc
-
-
-def _parse_text(value: Any) -> str | None:
-    """Text Fields stay text; placeholders mean missing; a trailing static link
-    such as TWT49U's `(https://mops.twse.com.tw/…)` is presentation, not data."""
-    if value is None:
-        return None
-    text = _TRAILING_LINK_RE.sub("", str(value)).strip()
-    return None if text in _MISSING else text
+    return sources.empty_batch(table.fields, str_fields=table.str_fields,
+                               datetime_fields=table.datetime_fields)
 
 
 def _twse_table(payload: dict, table: EventTable) -> tuple[list[str] | None, list]:
     stat = str(payload.get("stat", ""))
     if stat != "OK":
         # TWSE answers a polite "no data" stat for an event-free window.
-        if "沒有符合條件" in stat or "查無資料" in stat:
+        if sources.is_no_data(stat):
             return None, []
         raise ParseError(f"{table.name}: unexpected TWSE stat {stat!r}")
-    fields = [_normalize(f) for f in (payload.get("fields") or [])]
+    fields = [sources.collapse(f) for f in (payload.get("fields") or [])]
     data = payload.get("data") or []
     if not fields and not data:
         return None, []
@@ -299,7 +255,7 @@ def _tpex_table(payload: dict, table: EventTable) -> tuple[list[str] | None, lis
         raise ParseError(f"{table.name}: unexpected TPEx stat {stat!r}")
     tables = payload.get("tables") or []
     for t in tables:
-        fields = [_normalize(f) for f in (t.get("fields") or [])]
+        fields = [sources.collapse(f) for f in (t.get("fields") or [])]
         if table.id_column in fields:
             return fields, t.get("data") or []
     if not any(t.get("data") for t in tables):
@@ -312,13 +268,13 @@ def _tpex_table(payload: dict, table: EventTable) -> tuple[list[str] | None, lis
 
 def _rows_from_table(fields: list[str], data: list, table: EventTable) -> pd.DataFrame:
     wanted = [table.id_column, table.date_column, *table.column_map]
-    missing = [_normalize(c) for c in wanted if _normalize(c) not in fields]
+    missing = [sources.collapse(c) for c in wanted if sources.collapse(c) not in fields]
     if missing:
         raise ParseError(
             f"{table.name}: expected columns missing from source table: {missing} "
             f"(got {fields}) — source format changed?"
         )
-    index_of = {c: fields.index(_normalize(c)) for c in wanted}
+    index_of = {c: fields.index(sources.collapse(c)) for c in wanted}
     width = max(index_of.values()) + 1
 
     records = []
@@ -327,17 +283,18 @@ def _rows_from_table(fields: list[str], data: list, table: EventTable) -> pd.Dat
             raise ParseError(f"{table.name}: row has {len(row)} cells, expected ≥ {width}: {row!r}")
         record: dict[str, Any] = {
             "stock_id": str(row[index_of[table.id_column]]).strip(),
-            "date": _parse_date(row[index_of[table.date_column]]),
+            "date": sources.parse_announcement_date(
+                row[index_of[table.date_column]], table.name),
             "market": table.market,
         }
         for source, name in table.column_map.items():
             value = row[index_of[source]]
             if name in table.str_fields:
-                record[name] = _parse_text(value)
+                record[name] = sources.parse_text(value)
             elif name in table.datetime_fields:
-                record[name] = _parse_date(value)
+                record[name] = sources.parse_announcement_date(value, table.name)
             else:
-                record[name] = _parse_number(value)
+                record[name] = sources.parse_number(value)
         numerator = record[table.ratio_numerator]
         denominator = record[table.ratio_denominator]
         record[table.ratio_field] = (
@@ -345,7 +302,7 @@ def _rows_from_table(fields: list[str], data: list, table: EventTable) -> pd.Dat
         )
         records.append(record)
 
-    df = pd.DataFrame(records, columns=["stock_id", "date", "market", *table.fields])
+    df = pd.DataFrame(records, columns=sources.batch_columns(table.fields))
     for name in table.fields:
         if name in table.str_fields:
             continue

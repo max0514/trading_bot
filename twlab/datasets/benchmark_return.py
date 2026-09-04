@@ -3,9 +3,10 @@
 Official Source: TWSE 報酬指數 report MFI94U (under /rwd/zh/TAIEX/; the
 indicesReport path 404s), which answers with the WHOLE month containing the
 query date — one row per trading day, ROC-year dates, comma-grouped values,
-and a date header spelled 日　期 with a full-width space, so header names are
-whitespace-normalised before they are located. fetch(session, day) pulls that month's page and parse
-emits one row per listed day; upserts keyed on (stock_id, date) keep the daily
+and a date header spelled 日　期 with a full-width space, so header names go
+through `sources.squeeze` before they are located — as do the envelope, the
+ROC dates and the number spellings. fetch(session, day) pulls that month's
+page and parse emits one row per listed day; upserts keyed on (stock_id, date) keep the daily
 re-fetch of a growing month idempotent.
 
 The Wide Frame has a single column: stock_id is the literal Field name, so
@@ -16,12 +17,11 @@ also the archive's first month.
 from __future__ import annotations
 
 import datetime as dt
-import re
 from typing import Any
 
 import pandas as pd
 
-from twlab import qa
+from twlab import qa, sources
 from twlab.errors import ParseError
 from twlab.http import PoliteSession
 from twlab.spec import Cadence, DatasetSpec
@@ -33,9 +33,7 @@ FIELDS = [FIELD]
 STOCK_ID = FIELD                  # the Wide Frame's single column
 DATE_COLUMN = "日期"
 MARKET = "TWSE"
-COLUMNS = ["stock_id", "date", "market", FIELD]
-
-_MISSING = {"", "-", "--", "---", "N/A", "n/a"}
+COLUMNS = sources.batch_columns(FIELDS)
 
 
 def fetch(session: PoliteSession, day: dt.date) -> list[dict[str, Any]]:
@@ -44,42 +42,6 @@ def fetch(session: PoliteSession, day: dt.date) -> list[dict[str, Any]]:
         TWSE_URL, params={"date": day.strftime("%Y%m%d"), "response": "json"},
     )
     return [{"source": "twse", "payload": payload}]
-
-
-def _empty_batch() -> pd.DataFrame:
-    """Typed like a parsed batch (see price_earning_ratio._empty_batch)."""
-    return pd.DataFrame({
-        "stock_id": pd.Series(dtype="object"),
-        "date": pd.Series(dtype="datetime64[ns]"),
-        "market": pd.Series(dtype="object"),
-        FIELD: pd.Series(dtype="float64"),
-    })
-
-
-def _parse_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    text = str(value).strip().replace(",", "")
-    if text in _MISSING:
-        return None
-    try:
-        return float(text)
-    except ValueError as exc:
-        raise ParseError(f"unparseable number {value!r}") from exc
-
-
-def _normalise(name: Any) -> str:
-    """Header names with any whitespace (ASCII or U+3000) removed: 日　期 → 日期."""
-    return re.sub(r"\s+", "", str(name))
-
-
-def _parse_roc_date(text: str) -> pd.Timestamp:
-    """'115/08/03' (民國 year) → 2026-08-03."""
-    try:
-        year, month, day = (int(p) for p in str(text).strip().split("/"))
-        return pd.Timestamp(dt.date(year + 1911, month, day))
-    except (TypeError, ValueError) as exc:
-        raise ParseError(f"TWSE: unparseable ROC date {text!r}") from exc
 
 
 def parse(raw: dict[str, Any]) -> pd.DataFrame:
@@ -94,11 +56,12 @@ def parse(raw: dict[str, Any]) -> pd.DataFrame:
     payload = raw["payload"]
     stat = str(payload.get("stat", ""))
     if stat != "OK":
-        if "沒有符合條件" in stat or "查無資料" in stat:
-            return _empty_batch()
+        if sources.is_no_data(stat):        # a month TWSE has no page for
+            return sources.empty_batch(FIELDS)
         raise ParseError(f"TWSE: unexpected stat {stat!r}")
 
-    fields = [_normalise(f) for f in (payload.get("fields") or [])]
+    # The date header is spelled 日　期 with a full-width space, so squeeze it.
+    fields = [sources.squeeze(f) for f in (payload.get("fields") or [])]
     missing = [c for c in (DATE_COLUMN, FIELD) if c not in fields]
     if missing:
         raise ParseError(
@@ -109,9 +72,9 @@ def parse(raw: dict[str, Any]) -> pd.DataFrame:
     records = [
         {
             "stock_id": STOCK_ID,
-            "date": _parse_roc_date(row[date_at]),
+            "date": sources.parse_date(row[date_at], "TWSE"),
             "market": MARKET,
-            FIELD: _parse_number(row[value_at]),
+            FIELD: sources.parse_number(row[value_at]),
         }
         for row in payload.get("data") or []
     ]

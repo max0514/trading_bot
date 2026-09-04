@@ -10,7 +10,7 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from twlab import catalog, data, pipeline
+from twlab import catalog, data, pipeline, sources
 from twlab.dataframe import FinlabDataFrame
 from twlab.datasets import price_earning_ratio
 from twlab.errors import ParseError
@@ -129,7 +129,7 @@ def test_unknown_source_rejected():
 
 
 def test_payload_dates_accept_twse_and_roc_forms():
-    parse_date = price_earning_ratio._parse_date
+    parse_date = sources.parse_date
     assert parse_date("20260807", "TWSE") == pd.Timestamp("2026-08-07")
     assert parse_date("2026/08/07", "TPEx") == pd.Timestamp("2026-08-07")
     assert parse_date("115/08/07", "TPEx") == pd.Timestamp("2026-08-07")
@@ -138,11 +138,11 @@ def test_payload_dates_accept_twse_and_roc_forms():
 
 
 def test_unparseable_number_rejected():
-    assert price_earning_ratio._parse_number("2,370.00") == 2370.0
-    assert price_earning_ratio._parse_number("-") is None
-    assert price_earning_ratio._parse_number("N/A") is None
+    assert sources.parse_number("2,370.00") == 2370.0
+    assert sources.parse_number("-") is None
+    assert sources.parse_number("N/A") is None
     with pytest.raises(ParseError):
-        price_earning_ratio._parse_number("31.8x")
+        sources.parse_number("31.8x")
 
 
 # ── Seam 2: pipeline ───────────────────────────────────────────────────────

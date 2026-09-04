@@ -12,7 +12,7 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from twlab import catalog, data, pipeline, registry
+from twlab import catalog, data, pipeline, registry, sources
 from twlab.dataframe import FinlabDataFrame
 from twlab.datasets import benchmark_return
 from twlab.errors import ParseError
@@ -77,12 +77,12 @@ def test_date_header_whitespace_is_normalised():
 
 
 def test_roc_dates_convert_to_gregorian():
-    assert benchmark_return._parse_roc_date("115/08/03") == pd.Timestamp("2026-08-03")
-    assert benchmark_return._parse_roc_date("92/01/02") == pd.Timestamp("2003-01-02")
+    assert sources.parse_date("115/08/03", "TWSE") == pd.Timestamp("2026-08-03")
+    assert sources.parse_date("92/01/02", "TWSE") == pd.Timestamp("2003-01-02")
     with pytest.raises(ParseError):
-        benchmark_return._parse_roc_date("2026-08-03")
+        sources.parse_date("2026-08-03", "TWSE")
     with pytest.raises(ParseError):
-        benchmark_return._parse_roc_date("115/13/01")
+        sources.parse_date("115/13/01", "TWSE")
 
 
 def test_renamed_column_fails_loudly():

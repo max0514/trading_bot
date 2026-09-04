@@ -6,6 +6,7 @@ import math
 
 import pytest
 
+from twlab import sources
 from twlab.datasets import price
 from twlab.errors import ParseError
 
@@ -76,7 +77,7 @@ def test_unknown_source_rejected():
 
 
 def test_unparseable_number_rejected():
-    assert price._parse_number("1,234.5") == 1234.5
-    assert price._parse_number("--") is None
+    assert sources.parse_number("1,234.5") == 1234.5
+    assert sources.parse_number("--") is None
     with pytest.raises(ParseError):
-        price._parse_number("12a4")
+        sources.parse_number("12a4")

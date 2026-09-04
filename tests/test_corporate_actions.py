@@ -17,7 +17,7 @@ import math
 import pandas as pd
 import pytest
 
-from twlab import catalog, data, pipeline, registry
+from twlab import catalog, data, pipeline, registry, sources
 from twlab.dataframe import FinlabDataFrame
 from twlab.datasets import corporate_actions as ca
 from twlab.errors import ParseError
@@ -248,20 +248,20 @@ def test_ratio_is_missing_when_a_price_is_missing():
     ("2026/06/11", "2026-06-11"),      # Gregorian, just in case
 ])
 def test_source_dates_are_parsed(text, expected):
-    assert ca._parse_date(text) == pd.Timestamp(expected)
+    assert sources.parse_announcement_date(text, "dividend_tse") == pd.Timestamp(expected)
 
 
 def test_unparseable_date_and_number_rejected():
     with pytest.raises(ParseError):
-        ca._parse_date("十五年六月")
-    assert ca._parse_number("2,248.99") == 2248.99
-    assert ca._parse_number("--") is None
-    assert ca._parse_number("") is None
+        sources.parse_announcement_date("十五年六月", "dividend_tse")
+    assert sources.parse_number("2,248.99") == 2248.99
+    assert sources.parse_number("--") is None
+    assert sources.parse_number("") is None
     with pytest.raises(ParseError):
-        ca._parse_number("12a4")
-    assert ca._parse_text("115年第2季(https://mops.twse.com.tw/mops/web/t163sb01)") == "115年第2季"
-    assert ca._parse_text("  鑫聯大投控           ") == "鑫聯大投控"
-    assert ca._parse_text("--") is None
+        sources.parse_number("12a4")
+    assert sources.parse_text("115年第2季(https://mops.twse.com.tw/mops/web/t163sb01)") == "115年第2季"
+    assert sources.parse_text("  鑫聯大投控           ") == "鑫聯大投控"
+    assert sources.parse_text("--") is None
 
 
 # ── Seam 2: pipeline ───────────────────────────────────────────────────────
