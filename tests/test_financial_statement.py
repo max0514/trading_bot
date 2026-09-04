@@ -321,6 +321,33 @@ def test_a_mops_outage_answering_no_data_for_most_companies_is_quarantined(mongo
     assert result.rows == 1                       # 1 of the 3 companies asked about
 
 
+def test_a_total_mops_outage_is_quarantined_not_recorded_as_no_data(mongo, store_env):
+    """An empty batch from a market-wide source is a holiday. From a
+    per-company source it is an outage — recording it as `no_data` would mark
+    the day published and stop the Orchestrator ever retrying it."""
+    store = ParquetStore(store_env)
+    seed_universe(store)
+    nothing = "<html><body><div id='table01'><h4>查無所需資料！</h4></div></body></html>"
+    payloads = {request_for(name, sid, 115, 1): nothing
+                for sid in ("2330", "2317", "1101") for name in STMT}
+
+    result = pipeline.run(DS, Q1_DEADLINE, session=FakeSession(payloads), mongo=mongo,
+                          store=store, now=NOW)
+
+    assert result.status == "quarantined"
+    assert any("min_coverage" in f for f in result.failures)
+    assert not mongo.has_run(DS, Q1_DEADLINE)          # the day is still due
+
+
+def test_an_empty_universe_is_still_no_data(mongo, store_env):
+    """Nothing was asked, so nothing answering says nothing about the source."""
+    store = ParquetStore(store_env)
+    seed_universe(store, ids=("00631L",))              # an ETN: no statements exist
+    result = pipeline.run(DS, Q1_DEADLINE, session=FakeSession({}), mongo=mongo,
+                          store=store, now=NOW)
+    assert result.status == "no_data"
+
+
 def test_a_quarter_every_company_answers_clears_the_coverage_floor(mongo, store_env):
     store = ParquetStore(store_env)
     seed_universe(store)

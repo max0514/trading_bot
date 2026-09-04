@@ -150,16 +150,24 @@ def run(
         return RunResult(dataset, day, RunStatus.QUARANTINED, failures=[f"parse: {exc}"])
 
     # Drop empty halves (a market's holiday) so concat keeps the typed dtypes.
-    parts = [p for p in parts if not p.empty]
-    batch = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
-    if batch.empty:
+    # If every part was empty, keep one for its columns: an empty batch may
+    # still have to face the QA gate.
+    with_rows = [p for p in parts if not p.empty] or parts[:1]
+    batch = pd.concat(with_rows, ignore_index=True) if with_rows else pd.DataFrame()
+
+    # A per-company source hands the gate one raw per company it asked about,
+    # so coverage can be judged instead of an absolute row count.
+    asked = len(raws) if spec.universe_from is not None else 0
+    if batch.empty and not asked:
+        # Nothing to compare against: a market-wide source's holiday, or a
+        # per-company source whose universe is empty.
         mongo.record_run(spec, day, RunStatus.NO_DATA, now)
         return RunResult(dataset, day, RunStatus.NO_DATA)
-
-    if spec.universe_from is not None:
-        # A per-company source: one raw per company the fetch asked about, so
-        # the QA gate can judge coverage rather than an absolute row count.
-        batch.attrs[qa.REQUESTED] = len(raws)
+    if asked:
+        # Note an empty batch is NOT no_data here: every company answering
+        # nothing is an outage at the source, and recording it as no_data
+        # would mark the day done and stop the Orchestrator retrying it.
+        batch.attrs[qa.REQUESTED] = asked
 
     rows = len(batch)
     failures = qa.run_invariants(list(spec.invariants), batch)
