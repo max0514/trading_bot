@@ -38,9 +38,12 @@ services:
       TWLAB_MONGO_DB: ${TWLAB_MONGO_DB:-twlab}
       TWLAB_STORE_DIR: /data/store
       TZ: ${TZ:-Asia/Taipei}
-      TWLAB_CRON_RUN: ${TWLAB_CRON_RUN:-30 22 * * *}
-      TWLAB_CRON_WITNESS: ${TWLAB_CRON_WITNESS:-30 23 * * 0}
-      TWLAB_MAX_CATCHUP: ${TWLAB_MAX_CATCHUP:-14}
+      # Left empty on purpose: the schedules default in docker/entrypoint.sh
+      # and the catch-up window in twlab/orchestrator.py, so each default has
+      # exactly one home. Set them in .env to override.
+      TWLAB_CRON_RUN: ${TWLAB_CRON_RUN:-}
+      TWLAB_CRON_WITNESS: ${TWLAB_CRON_WITNESS:-}
+      TWLAB_MAX_CATCHUP: ${TWLAB_MAX_CATCHUP:-}
       FINMIND_TOKEN: ${FINMIND_TOKEN:-}
     volumes:
       - twlab_store:/data/store
