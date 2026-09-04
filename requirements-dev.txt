@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=7.4
+mongomock>=4.1
+# mongomock is not yet compatible with pymongo>=4.9 bulk-write internals
+pymongo>=4.3,<4.9
+mypy>=1.8

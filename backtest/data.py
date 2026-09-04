@@ -1,90 +1,112 @@
-"""Data loaders that pivot MongoDB collections into wide DataFrames.
+"""Legacy data loaders, now a thin shim over twlab (ADR-0003).
 
-Wide DataFrame convention: index = pd.DatetimeIndex, columns = stock_id (str), values = the field.
-Output mirrors finlab's `data.get(...)` return shape so strategies port cleanly.
+The functions keep their names, arguments, and Wide Frame shape (index =
+dates, columns = stock_id strings) so existing strategies run unchanged, but
+they read twlab's materialized Parquet store instead of the FinMind-fed Mongo
+collections:
+
+    get_price("close")            → data.get("price:收盤價")
+    get_monthly_revenue("yoy")    → data.get("monthly_revenue:去年同月增減(%)")
+    get_financial("Revenue")      → data.get("financial_statement:營業收入淨額")
+
+Two deliberate differences from the FinMind era, both point-in-time
+corrections: monthly and quarterly frames are indexed by their Statutory
+Deadline (10th of the next month; 5/15, 8/14, 11/14, 3/31) rather than the
+period, and quarterly flows are single quarters. Monthly revenue is still
+returned in 元 (twlab stores MOPS's 千元; the shim scales it) so absolute
+thresholds in old strategies keep their meaning. Returned frames are
+FinlabDataFrames, so FinLab helpers and auto-alignment are available too.
 """
 from __future__ import annotations
-import os
-import sys
+
 import pandas as pd
-from functools import lru_cache
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from scraper_in_pys.mongo import Mongo
-
+from twlab import catalog, data
+from twlab.dataframe import FinlabDataFrame
 
 PRICE_FIELD_MAP = {
-    "open": "open",
-    "high": "max",
-    "low": "min",
-    "close": "close",
-    "volume_shares": "Trading_Volume",
-    "turnover": "Trading_money",
-    "trades": "Trading_turnover",
+    "open": "開盤價",
+    "high": "最高價",
+    "low": "最低價",
+    "close": "收盤價",
+    "volume_shares": "成交股數",
+    "turnover": "成交金額",
+    "trades": "成交筆數",
 }
 
+# FinMind `type` names (what the old loader accepted) → financial_statement Fields.
+FINANCIAL_FIELD_MAP = {
+    "Revenue": "營業收入淨額",
+    "CostOfGoodsSold": "營業成本",
+    "GrossProfit": "營業毛利",
+    "OperatingExpenses": "營業費用",
+    "SellingExpenses": "推銷費用",
+    "AdministrativeExpenses": "管理費用",
+    "ResearchAndDevelopmentExpenses": "研究發展費",
+    "OperatingIncome": "營業利益",
+    "TotalNonoperatingIncomeAndExpense": "營業外收入及支出",
+    "PreTaxIncome": "稅前淨利",
+    "IncomeTax": "所得稅費用",
+    "IncomeFromContinuingOperations": "繼續營業單位損益",
+    "IncomeAfterTaxes": "合併總損益",
+    "TotalConsolidatedProfitForThePeriod": "本期綜合損益總額",
+    "EquityAttributableToOwnersOfParent": "歸屬母公司淨利_損",
+    "NoncontrollingInterests": "歸屬非控制權益淨利_損",
+    "EPS": "每股盈餘",
+    "InterestExpense": "利息費用",
+    "CashAndCashEquivalents": "現金及約當現金",
+    "Inventories": "存貨",
+    "CurrentAssets": "流動資產",
+    "TotalAssets": "資產總額",
+    "CurrentLiabilities": "流動負債",
+    "Liabilities": "負債總額",
+    "Equity": "股東權益總額",
+    "OrdinaryShare": "普通股股本",
+    "CashFlowsFromOperatingActivities": "營業活動之淨現金流入_流出",
+}
 
-def _to_wide(df: pd.DataFrame, value_col: str, date_col: str = "Timestamp") -> pd.DataFrame:
-    df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col])
-    df["stock_id"] = df["stock_id"].astype(str)
-    wide = df.pivot_table(index=date_col, columns="stock_id", values=value_col, aggfunc="last")
-    wide = wide.sort_index()
-    return wide
+MONTHLY_REVENUE_SCALE = 1000   # twlab serves MOPS's 千元; the old loader returned 元
 
 
-@lru_cache(maxsize=None)
-def get_price(field: str = "close") -> pd.DataFrame:
-    """Return wide price DataFrame for one of: open/high/low/close/volume_shares/turnover/trades."""
+def get_price(field: str = "close") -> FinlabDataFrame:
+    """Wide price frame for one of: open/high/low/close/volume_shares/turnover/trades."""
     if field not in PRICE_FIELD_MAP:
         raise ValueError(f"Unknown price field {field!r}. Choices: {list(PRICE_FIELD_MAP)}")
-    col = PRICE_FIELD_MAP[field]
-    repo = Mongo(collection="stock_price")
-    cursor = repo.collection.find({}, {"_id": 0, "stock_id": 1, "Timestamp": 1, col: 1})
-    df = pd.DataFrame(list(cursor))
-    if df.empty:
-        return pd.DataFrame()
-    return _to_wide(df, value_col=col)
+    return data.get(f"price:{PRICE_FIELD_MAP[field]}")
 
 
-@lru_cache(maxsize=None)
-def get_monthly_revenue(field: str = "revenue") -> pd.DataFrame:
-    """Wide DataFrame of monthly revenue, indexed by month-end date.
+def get_monthly_revenue(field: str = "revenue") -> FinlabDataFrame:
+    """Monthly revenue indexed by Statutory Deadline.
 
-    field: 'revenue' (NTD) or 'yoy' (% change vs same month last year, computed on the fly).
+    field: 'revenue' (元, as the FinMind-era loader returned) or 'yoy'
+    (% change vs the same month last year, as MOPS reports it).
     """
-    repo = Mongo(collection="month_revenue")
-    cursor = repo.collection.find({}, {"_id": 0, "stock_id": 1, "Timestamp": 1, "revenue": 1})
-    df = pd.DataFrame(list(cursor))
-    if df.empty:
-        return pd.DataFrame()
-    rev_wide = _to_wide(df, value_col="revenue")
     if field == "revenue":
-        return rev_wide
+        return data.get("monthly_revenue:當月營收") * MONTHLY_REVENUE_SCALE
     if field == "yoy":
-        # FinMind month_revenue dates are 1st-of-month-after; compare to value 12 rows back
-        return (rev_wide / rev_wide.shift(12) - 1) * 100
-    raise ValueError(f"Unknown monthly_revenue field {field!r}")
+        return data.get("monthly_revenue:去年同月增減(%)")
+    raise ValueError(f"Unknown monthly_revenue field {field!r}. Choices: ['revenue', 'yoy']")
 
 
-@lru_cache(maxsize=None)
-def get_financial(field: str) -> pd.DataFrame:
-    """Wide DataFrame of a quarterly financial statement field, indexed by quarter-end date.
+def get_financial(field: str) -> FinlabDataFrame:
+    """Quarterly statement frame indexed by Statutory Deadline.
 
-    `field` is FinMind's `type` value, e.g. 'Revenue', 'OperatingExpenses', 'GrossProfit'.
+    `field` is either a FinMind `type` name the old loader accepted (e.g.
+    'Revenue', 'OperatingExpenses') or a financial_statement Field name
+    (e.g. '營業收入淨額').
     """
-    repo = Mongo(collection="financial_statement")
-    cursor = repo.collection.find(
-        {"type": field},
-        {"_id": 0, "stock_id": 1, "Timestamp": 1, "value": 1},
-    )
-    df = pd.DataFrame(list(cursor))
-    if df.empty:
-        return pd.DataFrame()
-    return _to_wide(df, value_col="value")
+    name = FINANCIAL_FIELD_MAP.get(field, field)
+    key = f"financial_statement:{name}"
+    try:
+        catalog.resolve(key)
+    except KeyError:
+        raise ValueError(
+            f"Unknown financial field {field!r}. FinMind names: {sorted(FINANCIAL_FIELD_MAP)}; "
+            f"or any financial_statement Field name from the Catalog."
+        ) from None
+    return data.get(key)
 
 
 def list_stocks() -> list[str]:
-    """Stocks present in the price collection."""
-    repo = Mongo(collection="stock_price")
-    return sorted(repo.collection.distinct("stock_id"))
+    """Stock IDs present in the price Dataset."""
+    return sorted(str(c) for c in data.get("price:收盤價").columns)

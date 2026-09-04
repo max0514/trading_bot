@@ -1,0 +1,11 @@
+.git
+.claude
+.env
+**/__pycache__
+**/*.pyc
+*.ipynb
+*.pem
+scraper_ipynb
+docker_files
+.pytest_cache
+.mypy_cache

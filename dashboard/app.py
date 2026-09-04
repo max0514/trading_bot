@@ -15,12 +15,18 @@ from datetime import datetime
 
 from scraper_in_pys.mongo import Mongo, is_available as mongo_is_available
 from scraper_in_pys.scraper_manager import ScraperManager
+from dashboard.twlab_panel import (
+    LEGACY_TO_TWLAB, PipelineTriggers, legacy_row_status,
+    register_callbacks as register_twlab, twlab_card,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize the scraper manager (shared across callbacks)
 manager = ScraperManager()
+# twlab Orchestrator runs triggered from the dashboard (same path as the nightly job)
+twlab_runner = PipelineTriggers()
 
 app = dash.Dash(
     __name__,
@@ -118,9 +124,9 @@ app.layout = dbc.Container([
                                            size='sm', className='float-end'),
                             ]),
                             dbc.CardBody([
-                                make_scraper_row('stock_price', '📈 Stock Price'),
-                                make_scraper_row('monthly_revenue', '💰 Monthly Revenue'),
-                                make_scraper_row('quarterly_report', '📋 Quarterly Report'),
+                                make_scraper_row('stock_price', '📈 Stock Price (twlab: price)'),
+                                make_scraper_row('monthly_revenue', '💰 Monthly Revenue (twlab)'),
+                                make_scraper_row('quarterly_report', '📋 Quarterly Report (twlab: financial_statement)'),
                                 make_scraper_row('news', '📰 News'),
                                 make_scraper_row('ptt', '💬 PTT Forum'),
                             ]),
@@ -135,6 +141,11 @@ app.layout = dbc.Container([
                         ]),
                     ], md=5),
                 ]),
+
+                # twlab pipelines (official-source Datasets via the Orchestrator)
+                dbc.Row([
+                    dbc.Col(twlab_card(twlab_runner), md=12),
+                ], className='mt-3'),
             ]),
         ]),
 
@@ -280,8 +291,17 @@ def update_dashboard(n):
     badge_texts = []
     badge_classes = []
     scraper_names = ['stock_price', 'monthly_revenue', 'quarterly_report', 'news', 'ptt']
+    twlab_rows = {r['dataset']: r for r in twlab_runner.status()}
 
     for name in scraper_names:
+        if name in LEGACY_TO_TWLAB:
+            # Re-pointed at twlab: outcome comes from the Orchestrator's run log.
+            text, css, detail = legacy_row_status(twlab_rows, name)
+            progress_vals.append(100 if text == 'Published' else 0)
+            progress_texts.append(detail)
+            badge_texts.append(text)
+            badge_classes.append(css)
+            continue
         s = statuses.get(name, {})
         total = s.get('total', 0)
         done = s.get('done', 0)
@@ -337,7 +357,10 @@ for _name in ['stock_price', 'monthly_revenue', 'quarterly_report', 'news', 'ptt
     )
     def run_scraper(n_clicks, scraper_name=_name):
         if n_clicks:
-            manager.run_scraper(scraper_name)
+            if scraper_name in LEGACY_TO_TWLAB:
+                twlab_runner.run(LEGACY_TO_TWLAB[scraper_name])
+            else:
+                manager.run_scraper(scraper_name)
         return dash.no_update
 
 
@@ -349,7 +372,9 @@ for _name in ['stock_price', 'monthly_revenue', 'quarterly_report', 'news', 'ptt
 )
 def run_all(n_clicks):
     if n_clicks:
-        manager.run_all()
+        for name in ('news', 'ptt'):
+            manager.run_scraper(name)
+        twlab_runner.run_due()
     return dash.no_update
 
 
@@ -559,6 +584,8 @@ def refresh_news(n_clicks):
 
     return news_children, ptt_children, ptt_type_fig
 
+
+register_twlab(twlab_runner)
 
 server = app.server
 

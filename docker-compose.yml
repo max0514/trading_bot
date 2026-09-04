@@ -1,0 +1,89 @@
+# twlab — self-hosted Taiwan market data platform on an always-on server/NAS.
+#
+#   cp .env.example .env            # edit if needed
+#   docker compose up -d            # mongo + nightly orchestrator + store server
+#   docker compose --profile dashboard up -d dashboard
+#
+# See docs/deploy.md for first-run backfill, manual runs and research-machine setup.
+name: twlab
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    command: ["mongod", "--quiet", "--logpath", "/dev/null"]
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "${MONGO_BIND:-127.0.0.1}:${MONGO_PORT:-27017}:27017"   # host-side notebooks / dashboard
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Nightly Orchestrator: cron inside the container runs `twlab.orchestrator run`
+  # (catch-up included) and the weekly Witness cross-check.
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/twlab.Dockerfile
+    image: twlab:latest
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+      TWLAB_MONGO_DB: ${TWLAB_MONGO_DB:-twlab}
+      TWLAB_STORE_DIR: /data/store
+      TZ: ${TZ:-Asia/Taipei}
+      # Left empty on purpose: the schedules default in docker/entrypoint.sh
+      # and the catch-up window in twlab/orchestrator.py, so each default has
+      # exactly one home. Set them in .env to override.
+      TWLAB_CRON_RUN: ${TWLAB_CRON_RUN:-}
+      TWLAB_CRON_WITNESS: ${TWLAB_CRON_WITNESS:-}
+      TWLAB_MAX_CATCHUP: ${TWLAB_MAX_CATCHUP:-}
+      FINMIND_TOKEN: ${FINMIND_TOKEN:-}
+    volumes:
+      - twlab_store:/data/store
+      - twlab_logs:/var/log/twlab
+
+  # Publishes the materialized Parquet store read-only for research machines
+  # (TWLAB_SERVER_URL=http://<this host>:8787 on the laptop).
+  store:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${TWLAB_STORE_PORT:-8787}:80"
+    volumes:
+      - twlab_store:/srv/twlab:ro
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # Optional: the Dash dashboard with the twlab Pipelines panel (manual runs).
+  dashboard:
+    image: twlab:latest
+    build:
+      context: .
+      dockerfile: docker/twlab.Dockerfile
+    profiles: ["dashboard"]
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    command: ["python", "run_dashboard.py"]
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+      TWLAB_MONGO_DB: ${TWLAB_MONGO_DB:-twlab}
+      TWLAB_STORE_DIR: /data/store
+      TZ: ${TZ:-Asia/Taipei}
+      FINMIND_API_KEY: ${FINMIND_API_KEY:-}
+    ports:
+      - "${DASHBOARD_PORT:-8050}:8050"
+    volumes:
+      - twlab_store:/data/store
+
+volumes:
+  mongo_data:
+  twlab_store:
+  twlab_logs:
