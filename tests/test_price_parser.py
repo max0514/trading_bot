@@ -46,14 +46,16 @@ def test_tpex_parse_maps_source_columns_to_catalog_fields(tpex_payload):
     rows = price.parse({"source": "tpex", "payload": tpex_payload})
 
     assert list(rows.columns) == ["stock_id", "date", "market", *price.FIELDS]
-    assert len(rows) == 12
+    assert len(rows) == 1012  # every security in the recorded response
     assert (rows["market"] == "TPEx").all()
 
+    # Golden values from the real recorded TPEx response for 2026-08-07.
     row = rows[rows["stock_id"] == "5483"].iloc[0]
-    assert row["收盤價"] == 152.5          # from TPEx column 收盤
-    assert row["成交金額"] == 488926363    # from TPEx column 成交金額(元)
-    assert row["最後揭示買量"] == 12       # from TPEx column 最後買量(千股)
-    assert row["成交股數"] == 3214506
+    assert row["收盤價"] == 168.5            # from TPEx column "收盤 "
+    assert row["成交金額"] == 3186659500     # from TPEx column " 成交金額(元)"
+    assert row["最後揭示買量"] == 247        # from TPEx column "最後買量<br>(張數)"
+    assert row["最後揭示賣量"] == 5
+    assert row["成交股數"] == 18584000
 
 
 def test_renamed_column_fails_loudly():

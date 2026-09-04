@@ -3,9 +3,13 @@
 One row per Registry Dataset with its latest Orchestrator outcome (from the
 run log) and a Run button that triggers a single-Dataset run through the same
 entry point the nightly job uses; "Run all due" runs the Orchestrator plan.
-Runs happen in background threads so the dashboard stays responsive; the
-outcome shows up on the next status refresh. The runner is injectable so the
-logic is testable without Dash or MongoDB.
+The legacy market-data buttons (Stock Price, Monthly Revenue, Quarterly
+Report) are re-pointed at the twlab Datasets that supersede their FinMind
+scrapers — see LEGACY_TO_TWLAB — and show the Orchestrator's outcome too;
+News and PTT keep their legacy scrapers. Runs happen in background threads so
+the dashboard stays responsive; the outcome shows up on the next status
+refresh. The Orchestrator entry points are injectable so the logic is testable
+without Dash or MongoDB.
 """
 from __future__ import annotations
 
@@ -19,10 +23,18 @@ import dash_bootstrap_components as dbc
 from dash import Input, Output, callback, html
 
 from twlab import orchestrator, registry
+from twlab.pipeline import PUBLISHED
 
 logger = logging.getLogger(__name__)
 
 RUN_ALL = "__all_due__"
+
+# Legacy scraper-monitor buttons → the twlab Dataset that replaced the scraper.
+LEGACY_TO_TWLAB = {
+    "stock_price": "price",
+    "monthly_revenue": "monthly_revenue",
+    "quarterly_report": "financial_statement",
+}
 
 # Orchestrator status → (badge text, badge css class)
 _BADGES = {
@@ -38,7 +50,7 @@ _BADGES = {
 }
 
 
-class TwlabRunner:
+class PipelineTriggers:
     """Background runs + status for the dashboard; dependencies injectable."""
 
     def __init__(
@@ -97,7 +109,7 @@ class TwlabRunner:
             self._add_log(name, "run started")
             try:
                 result = self._run_dataset(name)
-                level = "INFO" if result.status in ("ok", "no_data") else "ERROR"
+                level = "INFO" if result.status in PUBLISHED else "ERROR"
                 self._add_log(name, self._describe(result), level=level)
             except Exception as exc:  # noqa: BLE001 — surface, never crash the UI
                 logger.exception("twlab run %s failed", name)
@@ -120,7 +132,7 @@ class TwlabRunner:
                 if not results:
                     self._add_log("orchestrator", "nothing was due")
                 for result in results:
-                    level = "INFO" if result.status in ("ok", "no_data") else "ERROR"
+                    level = "INFO" if result.status in PUBLISHED else "ERROR"
                     self._add_log(result.dataset, self._describe(result), level=level)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("twlab run-due failed")
@@ -163,7 +175,7 @@ def _row(name: str) -> dbc.Row:
     ], align="center", className="mb-2")
 
 
-def twlab_card(runner: TwlabRunner) -> dbc.Card:
+def twlab_card(runner: PipelineTriggers) -> dbc.Card:
     return dbc.Card([
         dbc.CardHeader([
             "twlab Pipelines",
@@ -185,6 +197,15 @@ def badge_for(row: dict[str, Any]) -> tuple[str, str]:
     return _BADGES.get(row["status"], (row["status"], "badge badge-idle"))
 
 
+def legacy_row_status(rows_by_dataset: dict[str, dict[str, Any]], legacy_name: str) -> tuple[str, str, str]:
+    """(badge text, badge class, progress text) for a re-pointed legacy button."""
+    row = rows_by_dataset.get(LEGACY_TO_TWLAB[legacy_name])
+    if row is None:
+        return _BADGES["never"] + ("",)
+    text, css = badge_for(row)
+    return text, css, day_text(row)
+
+
 def day_text(row: dict[str, Any]) -> str:
     parts = []
     if row.get("day"):
@@ -196,7 +217,7 @@ def day_text(row: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
-def register_callbacks(runner: TwlabRunner) -> None:
+def register_callbacks(runner: PipelineTriggers) -> None:
     names = runner.names()
 
     @callback(

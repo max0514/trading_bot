@@ -1,12 +1,12 @@
 """MongoDB system of record: one collection per Dataset, long-form rows.
 
 Rows are keyed by the Dataset's key fields and written with idempotent upserts,
-so re-runs and overlapping backfills never duplicate rows. Rows from a batch
-that failed QA stay in the system of record (raw evidence) but carry a
-Quarantine flag, and materialization excludes them — so they can never leak
-into published Wide Frames through a later run. A subsequent good scrape of
-the same keys clears the flag. Run outcomes (ok / quarantined / no_data) are
-logged to the `runs` collection, which the Orchestrator and dashboard query.
+so re-runs and overlapping backfills never duplicate rows. Only batches that
+passed the QA gate reach a Dataset's collection; a Quarantined batch is kept
+as evidence in the `quarantine` collection and never overwrites published
+rows, so it cannot leak into Wide Frames through a later materialization.
+Run outcomes (ok / quarantined / no_data / failed, witness_*) are logged to
+the `runs` collection, which the Orchestrator and dashboard query.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from twlab import config
 from twlab.spec import DatasetSpec
 
 RUNS = "runs"
+QUARANTINE = "quarantine"
 
 
 @dataclass(frozen=True)
@@ -70,8 +71,6 @@ class MongoStore:
                 k: _to_python(v, is_int=k in spec.int_fields)
                 for k, v in record.items()
             }
-            # A fresh scrape supersedes any earlier Quarantine of these keys.
-            doc["quarantined"] = False
             key = {k: doc[k] for k in spec.key_fields}
             ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
         if not ops:
@@ -81,27 +80,26 @@ class MongoStore:
             matched=result.matched_count, upserted=result.upserted_count
         )
 
-    def quarantine_batch(self, spec: DatasetSpec, batch: pd.DataFrame) -> None:
-        """Flag exactly this batch's rows so materialization never serves them."""
-        ops = [
-            UpdateOne(
-                {
-                    k: _to_python(record[k], is_int=k in spec.int_fields)
-                    for k in spec.key_fields
-                },
-                {"$set": {"quarantined": True}},
-            )
+    def quarantine_batch(self, spec: DatasetSpec, batch: pd.DataFrame,
+                         day: dt.date, now: dt.datetime) -> None:
+        """Keep a failed batch as evidence, outside the Dataset's collection."""
+        stamp = {"dataset": spec.name, "day": dt.datetime.combine(day, dt.time()), "at": now}
+        docs = [
+            {**stamp, **{k: _to_python(v, is_int=k in spec.int_fields) for k, v in record.items()}}
             for record in batch.to_dict("records")
         ]
-        if ops:
-            self.collection(spec.name).bulk_write(ops, ordered=False)
+        if docs:
+            self._db[QUARANTINE].insert_many(docs)
+
+    def quarantined_rows(self, dataset: str) -> pd.DataFrame:
+        """Evidence rows of Quarantined batches (operators inspect these; the
+        API never sees them)."""
+        return pd.DataFrame(list(self._db[QUARANTINE].find({"dataset": dataset}, {"_id": 0})))
 
     def load_long(self, spec: DatasetSpec) -> pd.DataFrame:
-        """Long-form history of a Dataset (Quarantined rows excluded), for
-        Wide Frame materialization. Period dates are returned as stored."""
-        cursor = self.collection(spec.name).find(
-            {"quarantined": {"$ne": True}}, {"_id": 0, "quarantined": 0}
-        )
+        """Long-form published history of a Dataset, for Wide Frame
+        materialization. Period dates are returned as stored."""
+        cursor = self.collection(spec.name).find({}, {"_id": 0})
         df = pd.DataFrame(list(cursor))
         if df.empty:
             return pd.DataFrame(columns=[*spec.key_fields, *spec.fields])
@@ -144,6 +142,18 @@ class MongoStore:
         doc = self._db[RUNS].find_one(
             {"dataset": dataset, "status": "ok"}, sort=[("day", DESCENDING)]
         )
+        return doc["day"].date() if doc else None
+
+    def last_ok_at(self, dataset: str) -> dt.datetime | None:
+        """When this Dataset last published (status ok), by run time."""
+        doc = self._db[RUNS].find_one(
+            {"dataset": dataset, "status": "ok"}, sort=[("at", DESCENDING)]
+        )
+        return doc["at"] if doc else None
+
+    def first_run_day(self, dataset: str) -> dt.date | None:
+        """The earliest batch day ever attempted — the catch-up horizon."""
+        doc = self._db[RUNS].find_one({"dataset": dataset}, sort=[("day", 1)])
         return doc["day"].date() if doc else None
 
     def has_run(self, dataset: str, day: dt.date, statuses: tuple[str, ...] = ("ok", "no_data")) -> bool:

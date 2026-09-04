@@ -18,6 +18,7 @@ import pandas as pd
 
 from twlab import registry
 from twlab.errors import DatasetNotMaterializedError
+from twlab.spec import quarter_due_on, quarter_end
 from twlab.store.mongo import MongoStore
 from twlab.store.parquet import ParquetStore
 
@@ -29,10 +30,12 @@ class Probe:
     dataset: str
     field: str
     finmind_dataset: str
-    finmind_value: str
+    finmind_value: str                             # column holding the value in a FinMind row
     scale: float                                   # FinMind value × scale == our unit
     finmind_date: Callable[[pd.Timestamp], str]    # our index date → FinMind row date
     tolerance: float = 1e-6                        # relative
+    row_filter: dict[str, Any] | None = None       # only rows matching these fields count
+    value: Callable[[dict[str, Any]], float | None] | None = None   # custom extraction
 
 
 def _same_day(d: pd.Timestamp) -> str:
@@ -45,13 +48,31 @@ def _month_start(d: pd.Timestamp) -> str:
     return d.strftime("%Y-%m-01")
 
 
+def _quarter_end_of_deadline(d: pd.Timestamp) -> str:
+    # Our quarterly index is the Statutory Deadline; FinMind dates statements
+    # by the quarter end they describe.
+    due = quarter_due_on(d.date())
+    if due is None:                                # not a deadline: previous quarter end
+        month = ((d.month - 1) // 3) * 3
+        return quarter_end(d.year if month else d.year - 1, month // 3 or 4).strftime("%Y-%m-%d")
+    return quarter_end(*due).strftime("%Y-%m-%d")
+
+
+def _net(row: dict[str, Any]) -> float:
+    return float(row.get("buy", 0)) - float(row.get("sell", 0))
+
+
 PROBES: list[Probe] = [
     Probe("price", "收盤價", "TaiwanStockPrice", "close", 1.0, _same_day),
     Probe("price", "成交股數", "TaiwanStockPrice", "Trading_Volume", 1.0, _same_day),
     Probe("monthly_revenue", "當月營收", "TaiwanStockMonthRevenue", "revenue", 1 / 1000, _month_start),
     Probe("price_earning_ratio", "本益比", "TaiwanStockPER", "PER", 1.0, _same_day, tolerance=0.01),
     Probe("institutional_investors_trading_summary", "投信買賣超股數",
-          "TaiwanStockInstitutionalInvestorsBuySell", "__investment_trust_net__", 1.0, _same_day),
+          "TaiwanStockInstitutionalInvestorsBuySell", "buy", 1.0, _same_day,
+          row_filter={"name": "Investment_Trust"}, value=_net),
+    # The 千元-vs-元 class of error on statements: a point-in-time balance.
+    Probe("financial_statement", "資產總額", "TaiwanStockBalanceSheet", "value", 1 / 1000,
+          _quarter_end_of_deadline, tolerance=1e-4, row_filter={"type": "TotalAssets"}),
 ]
 
 
@@ -105,11 +126,10 @@ class WitnessReport:
 
 
 def _witness_value(row: dict[str, Any], probe: Probe) -> float | None:
-    if probe.finmind_value == "__investment_trust_net__":
-        # FinMind's buy/sell dataset is long-form by investor name.
-        if row.get("name") != "Investment_Trust":
-            return None
-        return float(row.get("buy", 0)) - float(row.get("sell", 0))
+    if probe.row_filter and any(row.get(k) != v for k, v in probe.row_filter.items()):
+        return None                                # long-form dataset: another line item
+    if probe.value is not None:
+        return probe.value(row)
     value = row.get(probe.finmind_value)
     return None if value is None else float(value)
 

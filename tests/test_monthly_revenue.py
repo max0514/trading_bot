@@ -23,11 +23,12 @@ JULY_DEADLINE = dt.date(2026, 8, 10)    # July 2026 revenue is due by Aug 10
 MAY_DEADLINE = dt.date(2026, 6, 10)
 NOW = dt.datetime(2026, 8, 10, 22, 0)
 
-# Golden values (千元) from the FinMind Witness, embedded in the synthesized
-# MOPS-format fixtures — see tests/fixtures/monthly_revenue/README.md.
+# Golden values (千元) from the real MOPS recordings (cross-checked against the
+# FinMind Witness) — see tests/fixtures/monthly_revenue/README.md.
 TSMC_JULY = {"當月營收": 467_580_548, "上月營收": 442_679_969, "去年當月營收": 323_165_707,
-             "上月比較增減(%)": 5.62, "去年同月增減(%)": 44.69,
+             "上月比較增減(%)": 5.62, "去年同月增減(%)": 44.68,
              "當月累計營收": 2_872_064_238, "去年累計營收": 2_096_211_240, "前期比較增減(%)": 37.01}
+SII_FILERS, OTC_FILERS = 992, 860          # companies in the July 2026 recordings
 TSMC_MAY_REVENUE = 416_975_163
 
 
@@ -51,7 +52,7 @@ def test_sii_parse_shape_and_golden_values():
     assert (rows["market"] == "TWSE").all()
     assert rows["date"].nunique() == 1
     assert rows["date"].iloc[0] == pd.Timestamp("2026-07-01")   # the revenue month, not the deadline
-    assert len(rows) == 605                                       # 5 real + 600 synthetic filers
+    assert len(rows) == SII_FILERS
     assert "合計" not in rows["stock_id"].values                 # industry subtotal rows dropped
 
     tsmc = rows[rows["stock_id"] == "2330"].iloc[0]
@@ -64,7 +65,7 @@ def test_otc_parse_maps_market():
     assert (rows["market"] == "TPEx").all()
     row = rows[rows["stock_id"] == "5483"].iloc[0]
     assert row["當月營收"] == 6_997_671
-    assert row["上月比較增減(%)"] == -9.2
+    assert row["上月比較增減(%)"] == -9.19
 
 
 def test_renamed_column_fails_loudly():
@@ -98,7 +99,7 @@ def test_full_run_materializes_deadline_indexed_frames(mongo, store_env):
                           store=ParquetStore(store_env), now=NOW)
 
     assert result.status == "ok"
-    assert result.rows == 605 * 2
+    assert result.rows == SII_FILERS + OTC_FILERS
     rev = data.get("monthly_revenue:當月營收")
     assert list(rev.index) == [pd.Timestamp("2026-08-10")]   # Statutory Deadline, not July 1
     assert rev.loc["2026-08-10", "2330"] == TSMC_JULY["當月營收"]

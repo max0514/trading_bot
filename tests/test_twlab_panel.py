@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from dashboard.twlab_panel import TwlabRunner, badge_for, day_text
+from dashboard.twlab_panel import LEGACY_TO_TWLAB, PipelineTriggers, badge_for, day_text, legacy_row_status
 from twlab.pipeline import RunResult
 
 
@@ -40,7 +40,7 @@ def make_runner(outcomes: dict, status_rows=None, names=("price", "monthly_reven
             raise status_rows
         return [dict(r) for r in (status_rows or [])]
 
-    runner = TwlabRunner(run_dataset=run_dataset, run_due=run_due, status=status,
+    runner = PipelineTriggers(run_dataset=run_dataset, run_due=run_due, status=status,
                          names=lambda: list(names))
     return runner, started, release
 
@@ -122,3 +122,14 @@ def test_quarantine_detail_is_visible_in_the_panel():
            "rows": 3, "detail": ["min_rows: only 3 rows, expected at least 500"], "running": False}
     assert badge_for(row) == ("Quarantined", "badge badge-error")
     assert "min_rows" in day_text(row)
+
+
+def test_legacy_scraper_buttons_map_onto_twlab_datasets():
+    """Story 21: the existing Stock Price / Monthly Revenue / Quarterly Report
+    buttons trigger twlab Datasets and show the Orchestrator's outcome."""
+    assert LEGACY_TO_TWLAB == {"stock_price": "price", "monthly_revenue": "monthly_revenue",
+                               "quarterly_report": "financial_statement"}
+    rows = {r["dataset"]: r for r in BASE_ROWS}
+    assert legacy_row_status(rows, "stock_price") == ("Published", "badge badge-success", "2026-08-07 · 1389 rows")
+    assert legacy_row_status(rows, "monthly_revenue")[0] == "Never run"
+    assert legacy_row_status(rows, "quarterly_report") == ("Never run", "badge badge-idle", "")

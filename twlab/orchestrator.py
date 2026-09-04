@@ -2,9 +2,12 @@
 
 One command (`python -m twlab.orchestrator run`) computes due-ness from each
 Registry entry's Cadence and an injected clock, catches up windows missed
-since the last good run (bounded), runs each due batch through the pipeline
-in isolation (one failure never stops the others), and records the outcome in
-the run log that `status` and the dashboard read. Manual re-runs
+inside a bounded window (including Quarantined or failed days that a later
+good day would otherwise hide), runs each due batch through the pipeline in
+isolation (one failure never stops the others), and records the outcome in
+the run log that `status` and the dashboard read. Derived Datasets are
+planned after the scraped ones have run and are due whenever one of their
+inputs has published since their last derivation. Manual re-runs
 (`run --dataset X`, or `run_dataset()` from the dashboard) and `backfill`
 use the same entry point. Scheduled nightly by cron inside Docker Compose.
 """
@@ -18,7 +21,7 @@ from typing import Any, Callable, Iterable
 
 from twlab import config, pipeline, registry
 from twlab.http import PoliteSession
-from twlab.pipeline import RunResult
+from twlab.pipeline import PUBLISHED, RunResult
 from twlab.spec import DatasetSpec
 from twlab.store.mongo import MongoStore
 from twlab.store.parquet import ParquetStore
@@ -28,8 +31,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_CATCHUP = 14          # due days per Dataset per run; older gaps are `backfill`
 # How far back a fresh install looks for the latest due day of each Cadence.
 _FRESH_LOOKBACK_DAYS = {"daily": 7, "monthly": 45, "quarterly": 400}
+# How far back an installed Dataset re-checks for unpublished due days
+# (missed, Quarantined, or failed) on every run; older gaps are `backfill`.
+_CATCHUP_WINDOW_DAYS = {"daily": 45, "monthly": 130, "quarterly": 400}
 
-Runner = Callable[[str, dt.date], RunResult]
+RunFn = Callable[[str, dt.date], RunResult]
 
 
 @dataclass(frozen=True)
@@ -45,25 +51,37 @@ def _days(start: dt.date, end: dt.date) -> Iterable[dt.date]:
         day += dt.timedelta(days=1)
 
 
+def _inputs_published_since_last_derive(spec: DatasetSpec, mongo: MongoStore) -> bool:
+    """A derived Dataset is due when any input published after its last derivation."""
+    inputs = [t for d in spec.depends_on if (t := mongo.last_ok_at(d)) is not None]
+    if not inputs:
+        return False
+    mine = mongo.last_ok_at(spec.name)
+    return mine is None or max(inputs) > mine
+
+
 def _due_days(spec: DatasetSpec, now: dt.datetime, mongo: MongoStore,
               max_catchup: int) -> list[dt.date]:
     today = now.date()
-    last_ok = mongo.last_ok_day(spec.name)
     if spec.is_derived:
-        # Derived Datasets recompute from the whole store: only today matters.
-        if spec.cadence.is_due_day(today) and spec.cadence.due_at(today) <= now \
-                and not mongo.has_run(spec.name, today, statuses=("ok",)):
-            return [today]
-        return []
+        # Recomputed from the whole store, so only "now" is a meaningful batch
+        # day; due whenever an input has published since the last derivation.
+        return [today] if _inputs_published_since_last_derive(spec, mongo) else []
+    last_ok = mongo.last_ok_day(spec.name)
     if last_ok is None:
         start = today - dt.timedelta(days=_FRESH_LOOKBACK_DAYS[spec.cadence.kind])
     else:
-        start = last_ok + dt.timedelta(days=1)
+        # Re-check the whole window, not just days after the last good run:
+        # a Quarantined or failed day behind a later good day must be retried.
+        start = today - dt.timedelta(days=_CATCHUP_WINDOW_DAYS[spec.cadence.kind])
+        first = mongo.first_run_day(spec.name)
+        if first is not None:
+            start = max(start, first)
     due = [
         day for day in _days(start, today)
         if spec.cadence.is_due_day(day)
         and spec.cadence.due_at(day) <= now
-        and not mongo.has_run(spec.name, day)          # ok / no_data done; others retried
+        and not mongo.has_run(spec.name, day, statuses=PUBLISHED)   # others retried
     ]
     if last_ok is None:
         due = due[-1:]                                  # never backfill by accident
@@ -95,11 +113,18 @@ def _ordered(specs: dict[str, DatasetSpec]) -> list[DatasetSpec]:
 def plan(now: dt.datetime, mongo: MongoStore, *,
          specs: dict[str, DatasetSpec] | None = None,
          only: str | None = None,
-         max_catchup: int = DEFAULT_MAX_CATCHUP) -> list[Due]:
-    """Every (Dataset, batch day) due at `now` that has not been published yet."""
+         max_catchup: int = DEFAULT_MAX_CATCHUP,
+         derived: bool | None = None) -> list[Due]:
+    """Every (Dataset, batch day) due at `now` that has not been published yet.
+
+    `derived=False` plans only scraped Datasets, `True` only derived ones
+    (evaluated against the run log as it stands), `None` both.
+    """
     specs = specs if specs is not None else registry.all_specs()
     if only is not None:
         specs = {only: specs[only]}
+    if derived is not None:
+        specs = {n: s for n, s in specs.items() if s.is_derived == derived}
     return [
         Due(spec.name, day)
         for spec in _ordered(specs)
@@ -108,7 +133,7 @@ def plan(now: dt.datetime, mongo: MongoStore, *,
 
 
 def default_runner(*, session: PoliteSession | None, mongo: MongoStore,
-                   store: ParquetStore, now: dt.datetime) -> Runner:
+                   store: ParquetStore, now: dt.datetime) -> RunFn:
     session = session or PoliteSession()
 
     def run(dataset: str, day: dt.date) -> RunResult:
@@ -117,7 +142,7 @@ def default_runner(*, session: PoliteSession | None, mongo: MongoStore,
     return run
 
 
-def execute(due: list[Due], runner: Runner, mongo: MongoStore,
+def execute(due: list[Due], runner: RunFn, mongo: MongoStore,
             specs: dict[str, DatasetSpec], now: dt.datetime) -> list[RunResult]:
     """Run each due batch; a raised exception becomes a recorded `failed` run."""
     results: list[RunResult] = []
@@ -128,7 +153,7 @@ def execute(due: list[Due], runner: Runner, mongo: MongoStore,
             logger.exception("%s %s: failed", item.dataset, item.day)
             detail = f"{type(exc).__name__}: {exc}"
             mongo.record_run(specs[item.dataset], item.day, "failed", now, detail=[detail])
-            result = RunResult(item.dataset, item.day, "failed", failures=[detail])  # type: ignore[arg-type]
+            result = RunResult(item.dataset, item.day, "failed", failures=[detail])
         results.append(result)
         logger.info("%s %s: %s%s", result.dataset, result.day, result.status,
                     f" ({result.rows} rows)" if result.rows else "")
@@ -142,17 +167,21 @@ def run_due(now: dt.datetime | None = None, *,
             specs: dict[str, DatasetSpec] | None = None,
             only: str | None = None,
             max_catchup: int = DEFAULT_MAX_CATCHUP,
-            runner: Runner | None = None) -> list[RunResult]:
-    """The nightly entry point: plan, then execute."""
+            runner: RunFn | None = None) -> list[RunResult]:
+    """The nightly entry point: scraped Datasets first, then the derived
+    ones whose inputs just published."""
     now = now or dt.datetime.now()
     mongo = mongo or MongoStore()
     store = store or ParquetStore(config.store_dir())
     specs = specs if specs is not None else registry.all_specs()
     runner = runner or default_runner(session=session, mongo=mongo, store=store, now=now)
-    due = plan(now, mongo, specs=specs, only=only, max_catchup=max_catchup)
-    if not due:
+    results = execute(plan(now, mongo, specs=specs, only=only, max_catchup=max_catchup,
+                           derived=False), runner, mongo, specs, now)
+    results += execute(plan(now, mongo, specs=specs, only=only, max_catchup=max_catchup,
+                            derived=True), runner, mongo, specs, now)
+    if not results:
         logger.info("nothing due at %s", now)
-    return execute(due, runner, mongo, specs, now)
+    return results
 
 
 def run_dataset(dataset: str, day: dt.date | None = None, *,
@@ -174,22 +203,26 @@ def run_dataset(dataset: str, day: dt.date | None = None, *,
     return execute([Due(dataset, day)], runner, mongo, {dataset: spec}, now)[0]
 
 
-def backfill(dataset: str, start: dt.date, end: dt.date, *,
+def backfill(dataset: str, start: dt.date | None = None, end: dt.date | None = None, *,
              mongo: MongoStore | None = None, store: ParquetStore | None = None,
              session: PoliteSession | None = None,
              specs: dict[str, DatasetSpec] | None = None,
-             runner: Runner | None = None,
+             runner: RunFn | None = None,
              now: dt.datetime | None = None) -> list[RunResult]:
     """Walk every due day of a Dataset's Cadence in [start, end], oldest first,
-    skipping days already published. Failures are recorded and skipped."""
+    skipping days already published. Failures are recorded and skipped.
+    `start` defaults to the Registry's backfill_start (the archive's depth)."""
     now = now or dt.datetime.now()
     mongo = mongo or MongoStore()
     store = store or ParquetStore(config.store_dir())
     specs = specs if specs is not None else registry.all_specs()
     spec = specs[dataset]
+    start = start or spec.backfill_start
+    end = end or now.date()
     runner = runner or default_runner(session=session, mongo=mongo, store=store, now=now)
     due = [Due(dataset, d) for d in _days(start, end)
-           if spec.cadence.is_due_day(d) and not mongo.has_run(dataset, d)]
+           if spec.cadence.is_due_day(d) and not mongo.has_run(dataset, d, statuses=PUBLISHED)]
+    logger.info("%s: backfilling %d due days from %s to %s", dataset, len(due), start, end)
     return execute(due, runner, mongo, specs, now)
 
 
@@ -241,7 +274,8 @@ def main(argv: list[str] | None = None) -> int:
 
     bf = sub.add_parser("backfill", help="load history for one Dataset")
     bf.add_argument("dataset")
-    bf.add_argument("--from", dest="start", type=dt.date.fromisoformat, required=True)
+    bf.add_argument("--from", dest="start", type=dt.date.fromisoformat, default=None,
+                    help="first day (default: the Registry's backfill_start for the Dataset)")
     bf.add_argument("--to", dest="end", type=dt.date.fromisoformat, default=dt.date.today())
 
     wit = sub.add_parser("witness", help="cross-check samples against FinMind")
@@ -256,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "backfill":
         results = backfill(args.dataset, args.start, args.end)
-        bad = [r for r in results if r.status not in ("ok", "no_data")]
+        bad = [r for r in results if r.status not in PUBLISHED]
         print(f"{args.dataset}: {len(results)} batches, {len(bad)} not published")
         return 1 if bad else 0
     if args.command == "witness":

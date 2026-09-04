@@ -24,8 +24,20 @@ A DataFrame indexed by date with one column per Stock ID — the shape every val
 _Avoid_: pivot table, matrix
 
 **Event Table**:
-A long-form Dataset of dated records (announcements, corporate actions, penalties) served as-is rather than pivoted into a Wide Frame.
+A Dataset of dated Corporate Action records (除權息, 減資, 面額變更). Each Field is served as a Wide Frame indexed by the event date — sparse except on event days — exactly as FinLab serves `dividend_tse:除權息參考價`.
 _Avoid_: log, list data
+
+**Static Table**:
+A Dataset with no time axis (`security_categories`), served as one table keyed by Stock ID instead of Wide Frames.
+_Avoid_: lookup, mapping
+
+**Derived Dataset**:
+A Dataset computed by ETL from other materialized Datasets (`etl:adj_*`, `fundamental_features`) instead of scraped. It has no Official Source and is due whenever one of its inputs publishes.
+_Avoid_: view, computed table
+
+**Frequency**:
+The time granularity of a frame's index — daily, monthly, quarterly, or static — carried by every FinlabDataFrame and used by cross-frequency auto-alignment. Distinct from Cadence, which is about collection.
+_Avoid_: period, resolution
 
 **Stock ID**:
 The exchange code string identifying a listed security (e.g. `2330`).
@@ -41,7 +53,7 @@ The acceptance bar for the platform: exact Data Keys and coverage matching the C
 ### Collection
 
 **Official Source**:
-The government or exchange origin a Dataset is scraped from (TWSE, TPEx, MOPS, TDCC, TAIFEX, 國發會, 央行). Every Dataset has exactly one.
+The government or exchange origin a Dataset is scraped from (TWSE, TPEx, MOPS, TDCC, TAIFEX, 國發會, 央行). Every scraped Dataset has exactly one; the two exchanges' matching after-market files (TWSE for 上市, TPEx for 上櫃) count as one Official Source for a market-wide Dataset. Derived Datasets have none.
 _Avoid_: provider, vendor, API
 
 **Registry**:

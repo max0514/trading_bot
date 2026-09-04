@@ -36,11 +36,11 @@ class FakeRemote:
 
     def frame_bytes(self, dataset, field):
         self._guard(f"frame:{dataset}:{field}")
-        return self.server._frame_path(dataset, field).read_bytes()
+        return self.server.frame_path(dataset, field).read_bytes()
 
     def table_bytes(self, dataset):
         self._guard(f"table:{dataset}")
-        return (self.server._dataset_dir(dataset) / "table.parquet").read_bytes()
+        return self.server.table_path(dataset).read_bytes()
 
 
 class Clock:

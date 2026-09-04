@@ -96,3 +96,21 @@ def test_monthly_revenue_probe_maps_deadline_to_finmind_month():
     # dates July revenue 2026-08-01, in 元 — the probe must bridge both.
     assert probe.finmind_date(pd.Timestamp("2026-08-10")) == "2026-08-01"
     assert probe.scale == 1 / 1000
+
+
+def test_financial_statement_probe_maps_deadline_to_quarter_end_and_filters_line_items():
+    import pandas as pd
+    probe = next(p for p in witness.PROBES if p.dataset == "financial_statement")
+    assert probe.finmind_date(pd.Timestamp("2026-05-15")) == "2026-03-31"   # Q1 deadline → Q1 end
+    assert probe.finmind_date(pd.Timestamp("2026-03-31")) == "2025-12-31"   # annual deadline → Q4 end
+    assert probe.scale == 1 / 1000                                            # FinMind 元, ours 仟元
+    row = {"date": "2026-03-31", "type": "TotalAssets", "value": 8_660_949_685_000}
+    other = {"date": "2026-03-31", "type": "CurrentAssets", "value": 1}
+    assert witness._witness_value(row, probe) == 8_660_949_685_000
+    assert witness._witness_value(other, probe) is None
+
+
+def test_investment_trust_probe_nets_buys_against_sells():
+    probe = next(p for p in witness.PROBES if p.field == "投信買賣超股數")
+    assert witness._witness_value({"name": "Investment_Trust", "buy": 631374, "sell": 527505}, probe) == 103869
+    assert witness._witness_value({"name": "Foreign_Investor", "buy": 1, "sell": 0}, probe) is None

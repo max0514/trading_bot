@@ -1,10 +1,12 @@
-"""The per-Dataset pipeline: fetch → parse → upsert → QA gate → materialize.
+"""The per-Dataset pipeline: fetch → parse → QA gate → upsert → materialize.
 
 Invariant failures (and parse failures) Quarantine the batch: the run is
-recorded, the batch's rows are flagged in the system of record, Parquet
-materialization is skipped, and the API keeps serving the last good Wide
-Frames. Derived (ETL) Datasets skip the scrape and compute their frames from
-other materialized Datasets. Time and I/O dependencies are injectable.
+recorded, the batch's rows are kept as evidence in a side collection and
+never touch the system of record, Parquet materialization is skipped, and
+the API keeps serving the last good Wide Frames — so a bad re-scrape of an
+already-published day cannot overwrite it. Derived (ETL) Datasets skip the
+scrape and compute their frames from other materialized Datasets. Time and
+I/O dependencies are injectable.
 """
 from __future__ import annotations
 
@@ -26,7 +28,9 @@ from twlab.store.parquet import ParquetStore
 logger = logging.getLogger(__name__)
 
 
-RunStatus = Literal["ok", "quarantined", "no_data"]
+RunStatus = Literal["ok", "quarantined", "no_data", "failed"]
+# Outcomes that count as "this batch day is done" for the Orchestrator.
+PUBLISHED = ("ok", "no_data")
 
 
 @dataclass(frozen=True)
@@ -134,16 +138,15 @@ def run(
         mongo.record_run(spec, day, "no_data", now)
         return RunResult(dataset, day, "no_data")
 
-    upsert = mongo.upsert_batch(spec, batch)
     rows = len(batch)
-
     failures = qa.run_invariants(list(spec.invariants), batch)
     if failures:
         logger.error("%s %s: quarantined: %s", dataset, day, failures)
-        mongo.quarantine_batch(spec, batch)
+        mongo.quarantine_batch(spec, batch, day, now)
         mongo.record_run(spec, day, "quarantined", now, rows=rows, detail=failures)
         return RunResult(dataset, day, "quarantined", rows=rows, failures=failures)
 
+    upsert = mongo.upsert_batch(spec, batch)
     materialize(spec, mongo, store, now)
     mongo.record_run(spec, day, "ok", now, rows=rows)
     logger.info(
@@ -168,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{result.dataset} {result.day}: {result.status}"
           + (f" ({result.rows} rows)" if result.rows else "")
           + (f" — {result.failures}" if result.failures else ""))
-    return 0 if result.status in ("ok", "no_data") else 1
+    return 0 if result.status in PUBLISHED else 1
 
 
 if __name__ == "__main__":

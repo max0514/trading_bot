@@ -24,14 +24,19 @@ docker compose logs -f orchestrator
 The orchestrator container prints its schedule and the current status on start.
 From now on, every night at `TWLAB_CRON_RUN` (default 22:30 Asia/Taipei — after
 TWSE/TPEx post their final files at 21:32 and MOPS revenue closes at 22:00) it
-runs every Dataset that is due, catching up windows missed since the last good
-run (up to `TWLAB_MAX_CATCHUP` due days per Dataset). A fresh install collects
-only the latest due day of each Dataset — history is loaded explicitly:
+runs every Dataset that is due, catching up unpublished days inside a recent
+window — missed, Quarantined, or failed ones, up to `TWLAB_MAX_CATCHUP` due days
+per Dataset — and then re-derives `etl` / `fundamental_features` when their inputs
+published. A Quarantined batch never touches the system of record: its rows are
+kept in the `quarantine` collection for inspection and the API keeps serving the
+last good frames. A fresh install collects only the latest due day of each
+Dataset — history is loaded explicitly:
 
 ```bash
-# Backfill (idempotent; re-runs skip published days, failures are logged and skipped)
+# Backfill (idempotent; re-runs skip published days, failures are logged and skipped;
+# --from defaults to the Registry's archive depth for the Dataset)
 docker compose exec orchestrator python -m twlab.orchestrator backfill price --from 2024-01-01
-docker compose exec orchestrator python -m twlab.orchestrator backfill monthly_revenue --from 2023-01-01
+docker compose exec orchestrator python -m twlab.orchestrator backfill monthly_revenue
 
 # What updated last night, what is Quarantined, when each Dataset was last good
 docker compose exec orchestrator python -m twlab.orchestrator status
@@ -56,9 +61,12 @@ docker compose --profile dashboard up -d dashboard   # http://<host>:8050
 The *Scraper Monitor* tab gains a **twlab Pipelines** card: one row per Registry
 Dataset with its latest Orchestrator outcome (Published / Quarantined / Failed /
 Witness alert, with the failing Invariant), a **Run** button that triggers that
-Dataset through the Orchestrator's manual path, and **Run all due**. Outcomes appear
-in the card's log on the next refresh. The dashboard shares the store volume, so
-manual runs materialize into the same frames the `store` service publishes.
+Dataset through the Orchestrator's manual path, and **Run all due**. The existing
+Stock Price, Monthly Revenue and Quarterly Report buttons now trigger the twlab
+`price`, `monthly_revenue` and `financial_statement` Datasets and show the same
+outcome (News and PTT keep their legacy scrapers). Outcomes appear in the card's
+log on the next refresh. The dashboard shares the store volume, so manual runs
+materialize into the same frames the `store` service publishes.
 
 ## Research machines (FinLab-style client)
 

@@ -59,7 +59,7 @@ def test_golden_values_round_trip(seeded):
     assert data.get("price:收盤價").loc["2026-08-07", "2330"] == 2370.0
     assert data.get("price:成交股數").loc["2026-08-07", "2330"] == 24414025
     assert data.get("price:最後揭示賣量").loc["2026-08-07", "2330"] == 563
-    assert data.get("price:收盤價").loc["2026-08-07", "5483"] == 152.5
+    assert data.get("price:收盤價").loc["2026-08-07", "5483"] == 168.5
 
 
 def test_frames_are_independent_copies(seeded):

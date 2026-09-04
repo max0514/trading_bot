@@ -198,8 +198,10 @@ SPECS = [
         invariants=(
             qa.required_columns(["stock_id", "date", "market", *FIELDS]),
             qa.unique_key(["stock_id", "date"]),
-            # ~1,900+ securities trade across both markets on a normal day.
-            qa.min_rows(500),
+            # ~2,400 securities trade across both markets on a normal day (1,377 上市
+            # + 1,012 上櫃 in the recordings); below 1,500 means a market's file is
+            # missing or truncated.
+            qa.min_rows(1500),
             qa.non_negative(FIELDS),
             qa.high_not_below_low(),
         ),

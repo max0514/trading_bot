@@ -24,7 +24,7 @@ import requests
 
 from twlab import config
 from twlab.errors import DatasetNotMaterializedError, RemoteUnavailable, StalenessWarning
-from twlab.store.parquet import MANIFEST_FILE, TABLE_FILE, ParquetStore, _atomic_write
+from twlab.store.parquet import MANIFEST_FILE, TABLE_FILE, ParquetStore, atomic_write
 
 CACHE_FILE = "cache.json"
 
@@ -121,7 +121,7 @@ class CachedStore:
     def _save_meta(self, dataset: str, meta: dict[str, Any]) -> None:
         path = self._meta_path(dataset)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write(path, lambda tmp: tmp.write_text(
+        atomic_write(path, lambda tmp: tmp.write_text(
             json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8"))
 
     def _current_manifest(self, dataset: str, meta: dict[str, Any]) -> dict | None:
@@ -137,8 +137,7 @@ class CachedStore:
         meta["manifest"] = manifest
         meta["checked_at"] = self._clock()
         self._save_meta(dataset, meta)
-        _atomic_write(self._local.manifest_path(dataset), lambda tmp: tmp.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8"))
+        self._local.write_manifest(dataset, manifest)
         return manifest
 
     def _stale_warning(self, dataset: str, meta: dict[str, Any]) -> None:
@@ -173,19 +172,19 @@ class CachedStore:
             raise DatasetNotMaterializedError(
                 f"{dataset}/{name}: server unreachable and never synced to this machine")
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write(local_path, lambda tmp: tmp.write_bytes(payload))
+        atomic_write(local_path, lambda tmp: tmp.write_bytes(payload))
         meta["versions"][name] = version
         self._save_meta(dataset, meta)
 
     def read_frame(self, dataset: str, field: str) -> pd.DataFrame:
         name = f"{field}.parquet"
         self._sync(dataset, name, lambda: self._remote.frame_bytes(dataset, field),
-                   self._local.root / dataset / name)
+                   self._local.frame_path(dataset, field))
         return self._local.read_frame(dataset, field)
 
     def read_table(self, dataset: str) -> pd.DataFrame:
         self._sync(dataset, TABLE_FILE, lambda: self._remote.table_bytes(dataset),
-                   self._local.root / dataset / TABLE_FILE)
+                   self._local.table_path(dataset))
         return self._local.read_table(dataset)
 
     def read_manifest(self, dataset: str) -> dict:

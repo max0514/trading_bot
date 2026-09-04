@@ -200,3 +200,25 @@ def test_sim_adapter_maps_a_finlab_position_onto_the_engine(acceptance_api):
     monthly = sim(position, resample="M")          # FinLab's default cadence: the month's rebalance day
     assert monthly.positions.loc["2026-08-18", "2330"]
     assert not monthly.positions.loc["2026-08-10", "2330"]
+
+
+def test_sim_simulates_on_adjusted_prices_when_they_are_materialized(acceptance_api, acceptance_store):
+    """Story 6 / #15: no phantom ex-date crashes — sim() reads etl:adj_* like FinLab."""
+    store = ParquetStore(acceptance_store)
+    raw_open = store.read_frame("price", "開盤價")
+    adjusted = {
+        "adj_close": store.read_frame("price", "收盤價") * 0.5,
+        "adj_open": raw_open * 0.5,
+        "adj_high": store.read_frame("price", "最高價") * 0.5,
+        "adj_low": store.read_frame("price", "最低價") * 0.5,
+    }
+    store.write_frames("etl", adjusted, now=NOW, frequency="daily")
+    try:
+        position = FinlabDataFrame(False, index=raw_open.index, columns=raw_open.columns)
+        position._freq = "daily"
+        position.loc["2026-08-10":, "2330"] = True
+        report = sim(position, resample="D")
+        entry = report.trades.iloc[0]
+        assert entry["entry_price"] == pytest.approx(raw_open.loc[entry["entry_date"], "2330"] * 0.5)
+    finally:
+        shutil.rmtree(store.root / "etl")

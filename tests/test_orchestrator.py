@@ -68,6 +68,25 @@ class TestDailyDueness:
             ("daily_ds", dt.date(2026, 8, 7)),
         ]
 
+    def test_a_bad_day_behind_a_later_good_day_is_still_retried(self, mongo):
+        mongo.record_run(DAILY, dt.date(2026, 8, 3), "ok", at("2026-08-03"))
+        mongo.record_run(DAILY, dt.date(2026, 8, 4), "quarantined", at("2026-08-04"))
+        mongo.record_run(DAILY, dt.date(2026, 8, 5), "failed", at("2026-08-05"))
+        mongo.record_run(DAILY, dt.date(2026, 8, 6), "ok", at("2026-08-06"))
+        assert plan(at("2026-08-07"), {"daily_ds": DAILY}, mongo) == [
+            ("daily_ds", dt.date(2026, 8, 4)),
+            ("daily_ds", dt.date(2026, 8, 5)),
+            ("daily_ds", dt.date(2026, 8, 7)),
+        ]
+
+    def test_catch_up_never_reaches_before_the_first_run(self, mongo):
+        # Installed on Aug 5: the days before it are not "missed", they are backfill.
+        mongo.record_run(DAILY, dt.date(2026, 8, 5), "ok", at("2026-08-05"))
+        assert plan(at("2026-08-07"), {"daily_ds": DAILY}, mongo) == [
+            ("daily_ds", dt.date(2026, 8, 6)),
+            ("daily_ds", dt.date(2026, 8, 7)),
+        ]
+
     def test_catch_up_is_capped_to_the_most_recent_due_days(self, mongo):
         mongo.record_run(DAILY, dt.date(2026, 5, 1), "ok", at("2026-05-01"))
         days = [d for _, d in plan(at("2026-08-07"), {"daily_ds": DAILY}, mongo, max_catchup=3)]
@@ -113,18 +132,39 @@ class TestMonthlyAndQuarterlyDueness:
 
 
 class TestDerivedAndOrdering:
-    def test_derived_datasets_run_after_their_dependencies_for_today_only(self, mongo):
+    def test_derived_datasets_are_planned_after_their_inputs(self, mongo):
         mongo.record_run(DAILY, dt.date(2026, 8, 4), "ok", at("2026-08-04"))
         specs = {"derived_ds": DERIVED, "daily_ds": DAILY}
         p = plan(at("2026-08-07"), specs, mongo)
         assert p[-1] == ("derived_ds", dt.date(2026, 8, 7))
         assert p[:-1] == [("daily_ds", dt.date(2026, 8, d)) for d in (5, 6, 7)]
 
-    def test_derived_not_due_before_its_window_or_when_already_derived(self, mongo):
+    def test_derived_is_due_only_when_an_input_published_since_its_last_derivation(self, mongo):
         specs = {"derived_ds": DERIVED}
-        assert plan(at("2026-08-07", "22:00"), specs, mongo) == []
+        assert plan(at("2026-08-07"), specs, mongo) == []                     # no input yet
+        mongo.record_run(DAILY, dt.date(2026, 8, 7), "ok", at("2026-08-07", "22:30"))
+        assert plan(at("2026-08-07"), specs, mongo) == [("derived_ds", dt.date(2026, 8, 7))]
         mongo.record_run(DERIVED, dt.date(2026, 8, 7), "ok", at("2026-08-07", "22:31"))
-        assert plan(at("2026-08-07", "23:00"), specs, mongo) == []
+        assert plan(at("2026-08-08", "12:00"), specs, mongo) == []           # nothing new
+        mongo.record_run(DAILY, dt.date(2026, 8, 8), "ok", at("2026-08-08", "22:30"))
+        assert plan(at("2026-08-08"), specs, mongo) == [("derived_ds", dt.date(2026, 8, 8))]
+
+    def test_run_due_derives_in_the_same_night_its_inputs_publish(self, mongo):
+        """The nightly job plans derived Datasets after the scraped phase ran,
+        so an input published tonight triggers tonight's derivation."""
+        specs = {"daily_ds": DAILY, "derived_ds": DERIVED}
+        mongo.record_run(DAILY, dt.date(2026, 8, 6), "ok", at("2026-08-06", "22:30"))
+        mongo.record_run(DERIVED, dt.date(2026, 8, 6), "ok", at("2026-08-06", "22:31"))
+        calls = []
+
+        def runner(dataset, day):
+            calls.append(dataset)
+            mongo.record_run(specs[dataset], day, "ok", at("2026-08-07", "22:3" + str(len(calls))))
+            return RunResult(dataset, day, "ok", rows=1)
+
+        results = orchestrator.run_due(at("2026-08-07", "22:30"), mongo=mongo, specs=specs, runner=runner)
+        assert calls == ["daily_ds", "derived_ds"]
+        assert [r.status for r in results] == ["ok", "ok"]
 
     def test_single_dataset_filter(self, mongo):
         specs = {"daily_ds": DAILY, "monthly_ds": MONTHLY}
@@ -183,6 +223,16 @@ class TestExecution:
         assert calls == [dt.date(2026, 4, 10), dt.date(2026, 5, 10),
                          dt.date(2026, 7, 10), dt.date(2026, 8, 10)]
         assert all(r.status == "ok" for r in results)
+
+    def test_backfill_defaults_to_the_registry_archive_depth(self, mongo):
+        calls = []
+        orchestrator.backfill(
+            "quarterly_ds", end=dt.date(2020, 12, 31), mongo=mongo, specs={"quarterly_ds": QUARTERLY},
+            runner=lambda d, day: calls.append(day) or RunResult(d, day, "ok", rows=1),
+            now=at("2026-08-07"),
+        )
+        assert calls == [dt.date(2020, 3, 31), dt.date(2020, 5, 15),
+                         dt.date(2020, 8, 14), dt.date(2020, 11, 14)]   # from backfill_start 2020-01-01
 
 
 class TestRealPipelineRunner:

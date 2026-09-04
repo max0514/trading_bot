@@ -16,9 +16,15 @@ if [ "$1" = "cron" ]; then
     WITNESS_SCHEDULE="${TWLAB_CRON_WITNESS:-30 23 * * 0}"
     MAX_CATCHUP="${TWLAB_MAX_CATCHUP:-14}"
 
-    # cron jobs do not inherit the container environment: persist it for them.
-    printenv | grep -E '^(MONGODB_URI|TWLAB_|FINMIND_|TZ)' \
-        | sed "s/^\([^=]*\)=\(.*\)$/export \1='\2'/" > /etc/twlab.env
+    # cron jobs do not inherit the container environment: persist it for them,
+    # shell-quoted so URIs with passwords or odd characters survive intact.
+    python3 - > /etc/twlab.env <<'PY'
+import os, shlex
+for key, value in sorted(os.environ.items()):
+    if key == "TZ" or key.startswith(("MONGODB_URI", "TWLAB_", "FINMIND_")):
+        print(f"export {key}={shlex.quote(value)}")
+PY
+    chmod 0600 /etc/twlab.env
 
     cat > /etc/cron.d/twlab <<EOF
 SHELL=/bin/sh

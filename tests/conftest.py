@@ -6,6 +6,7 @@ recorded responses, Seam 1 reads a store seeded through the pipeline.
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 import json
 from pathlib import Path
 from urllib.parse import urlencode
@@ -29,8 +30,16 @@ def load_fixture(name: str, dataset: str = "price") -> dict:
 
 
 def load_text_fixture(name: str, dataset: str) -> str:
-    """A recorded HTML/text response under tests/fixtures/<dataset>/."""
-    return (FIXTURES / dataset / name).read_text(encoding="utf-8")
+    """A recorded HTML/text response under tests/fixtures/<dataset>/.
+
+    Large recordings are stored gzipped (<name>.gz) as the decoded UTF-8 text
+    the parser receives from PoliteSession.get_text().
+    """
+    path = FIXTURES / dataset / name
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    with gzip.open(path.with_name(path.name + ".gz"), "rt", encoding="utf-8") as f:
+        return f.read()
 
 
 class FakeSession:

@@ -35,8 +35,7 @@ class Cadence:
     quarterly  → each quarterly Statutory Deadline at `at`, for the quarter it closes
     """
     kind: Literal["daily", "monthly", "quarterly"]
-    at: str                      # local wall-clock "HH:MM" the source has published by
-    tz: str = "Asia/Taipei"
+    at: str                      # wall-clock "HH:MM" (server time, Asia/Taipei) the source has published by
 
     def is_due_day(self, day: dt.date) -> bool:
         if self.kind == "daily":
