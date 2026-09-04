@@ -132,7 +132,7 @@ STATEMENT_URLS = {
     "cash_flow": MOPS_URL.format(page="05"),
 }
 # The per-company pages carry no exchange; join price / security_categories for it.
-MARKET = "MOPS"
+MARKET = "MOPS"   # the Official Source, not an exchange — docs/catalog-deviations.md
 ACCOUNT_COLUMN = "會計項目"
 AMOUNT_COLUMN = "金額"
 # MOPS's explicit "nothing filed for this company/period" answers.
@@ -772,7 +772,12 @@ SPECS = [
         invariants=(
             qa.required_columns(COLUMNS),
             qa.unique_key(["stock_id", "date"]),
-            # No row-count floor: the batch size follows the universe.
+            # The batch size follows the universe, so the floor is relative:
+            # half the companies asked about must answer. Real quarters land
+            # near 100%, and a backfill into 2013 — today's universe against a
+            # market a third smaller — still clears it, while a MOPS outage
+            # answering 「查無所需資料」 for all but a handful does not.
+            qa.min_coverage(0.5),
             balance_sheet_balances(),
             current_assets_within_total_assets(),
             gross_profit_identity(),

@@ -4,8 +4,10 @@ A systematically wrong parse (a 千元 column read as 元, a shifted column)
 passes structural Invariants but not a comparison with an independent source.
 Each Probe maps one of our Data Keys onto a FinMind dataset/column, including
 the unit scale and the date convention gap (our Statutory-Deadline index vs
-FinMind's period dating). Samples are drawn from recent rows of the published
-Wide Frame; outcomes are logged as `witness_ok` / `witness_alert` runs.
+FinMind's period dating). A Probe on a derived ratio has no single column to
+read, so it recomputes the ratio from FinMind's own line items (`combine`) —
+which is what makes it evidence rather than a restatement of our own parse. Samples are drawn from recent rows of the published
+Wide Frame; outcomes are logged as `RunStatus.WITNESS_OK` / `WITNESS_ALERT` runs.
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ import pandas as pd
 from twlab import registry
 from twlab.errors import DatasetNotMaterializedError
 from twlab.spec import quarter_due_on, quarter_end
+from twlab.status import RunStatus
 from twlab.store.mongo import MongoStore
 from twlab.store.parquet import ParquetStore
 
@@ -36,6 +39,11 @@ class Probe:
     tolerance: float = 1e-6                        # relative
     row_filter: dict[str, Any] | None = None       # only rows matching these fields count
     value: Callable[[dict[str, Any]], float | None] | None = None   # custom extraction
+    # Our derived ratios have no single FinMind row to read: the Witness has to
+    # recompute them from the line items FinMind publishes for that date. When
+    # set, this is handed {line item name: value} for one date instead.
+    combine: Callable[[dict[str, float]], float | None] | None = None
+    finmind_type: str = "type"                     # column naming the line item
 
 
 def _same_day(d: pd.Timestamp) -> str:
@@ -62,6 +70,27 @@ def _net(row: dict[str, Any]) -> float:
     return float(row.get("buy", 0)) - float(row.get("sell", 0))
 
 
+def _ratio(numerator: str, denominator: str) -> Callable[[dict[str, float]], float | None]:
+    """A percentage rebuilt from two of FinMind's own statement line items.
+
+    This is what makes a `fundamental_features` probe worth having: our ratio
+    is computed from our parse of MOPS, theirs from their parse of the same
+    filing, and the units cancel — so agreement is evidence about the whole
+    chain (MOPS page → Fields → derived ratio), not a restatement of it.
+    """
+
+    def combine(items: dict[str, float]) -> float | None:
+        top, bottom = items.get(numerator), items.get(denominator)
+        if top is None or not bottom:
+            return None
+        return 100.0 * top / bottom
+
+    return combine
+
+
+FINMIND_STATEMENTS = "TaiwanStockFinancialStatements"
+
+
 PROBES: list[Probe] = [
     Probe("price", "收盤價", "TaiwanStockPrice", "close", 1.0, _same_day),
     Probe("price", "成交股數", "TaiwanStockPrice", "Trading_Volume", 1.0, _same_day),
@@ -73,6 +102,20 @@ PROBES: list[Probe] = [
     # The 千元-vs-元 class of error on statements: a point-in-time balance.
     Probe("financial_statement", "資產總額", "TaiwanStockBalanceSheet", "value", 1 / 1000,
           _quarter_end_of_deadline, tolerance=1e-4, row_filter={"type": "TotalAssets"}),
+    # Derived ratios (twlab 13) against FinMind's independent calculation from
+    # the same filing. FinMind serves single-quarter statement values, which is
+    # the convention `financial_statement` de-cumulates to, so the periods line
+    # up without adjustment.
+    Probe("fundamental_features", "每股稅後淨利", FINMIND_STATEMENTS, "value", 1.0,
+          _quarter_end_of_deadline, tolerance=1e-4, row_filter={"type": "EPS"}),
+    Probe("fundamental_features", "營業毛利率", FINMIND_STATEMENTS, "value", 1.0,
+          _quarter_end_of_deadline, tolerance=1e-4,
+          combine=_ratio("GrossProfit", "Revenue")),
+    Probe("fundamental_features", "營業利益率", FINMIND_STATEMENTS, "value", 1.0,
+          _quarter_end_of_deadline, tolerance=1e-4,
+          combine=_ratio("OperatingIncome", "Revenue")),
+    Probe("fundamental_features", "營業利益", FINMIND_STATEMENTS, "value", 1 / 1000,
+          _quarter_end_of_deadline, tolerance=1e-4, row_filter={"type": "OperatingIncome"}),
 ]
 
 
@@ -134,6 +177,27 @@ def _witness_value(row: dict[str, Any], probe: Probe) -> float | None:
     return None if value is None else float(value)
 
 
+def _answers(rows: list[dict[str, Any]], probe: Probe,
+             wanted: dict[str, pd.Timestamp]) -> dict[str, float]:
+    """The Witness's value for each wanted date — read off one row, or, for a
+    ratio probe, recomputed from every line item FinMind has for that date."""
+    if probe.combine is None:
+        answers = {}
+        for row in rows:
+            value = _witness_value(row, probe)
+            if value is not None and str(row.get("date")) in wanted:
+                answers[str(row.get("date"))] = value
+        return answers
+
+    items: dict[str, dict[str, float]] = {}
+    for row in rows:
+        date, value = str(row.get("date")), row.get(probe.finmind_value)
+        if date in wanted and value is not None:
+            items.setdefault(date, {})[str(row.get(probe.finmind_type))] = float(value)
+    combined = {date: probe.combine(by_item) for date, by_item in items.items()}
+    return {date: value for date, value in combined.items() if value is not None}
+
+
 def _sample_cells(frame: pd.DataFrame, n: int, rng: random.Random,
                   recent_rows: int = 60) -> list[tuple[pd.Timestamp, str]]:
     recent = frame.tail(recent_rows)
@@ -161,11 +225,8 @@ def check(probe: Probe, store: ParquetStore, client: FinMindClient, *,
     for stock_id, dates in by_stock.items():
         wanted = {probe.finmind_date(d): d for d in dates}
         start, end = min(wanted), max(wanted)
-        answers: dict[str, float] = {}
-        for row in client.rows(probe.finmind_dataset, stock_id, start, end):
-            value = _witness_value(row, probe)
-            if value is not None and str(row.get("date")) in wanted:
-                answers[str(row.get("date"))] = value
+        answers = _answers(client.rows(probe.finmind_dataset, stock_id, start, end),
+                           probe, wanted)
         for fm_date, our_date in wanted.items():
             report.checked += 1
             if fm_date not in answers:
@@ -203,7 +264,7 @@ def run_witness(store: ParquetStore, mongo: MongoStore, client: FinMindClient, *
         except KeyError:
             continue
         mismatches = [m for r in group for m in r.mismatches]
-        status = "witness_ok" if not mismatches else "witness_alert"
+        status = RunStatus.WITNESS_OK if not mismatches else RunStatus.WITNESS_ALERT
         detail = [f"{m.dataset}:{m.field} {m.stock_id} {m.date}: "
                   f"ours={m.ours:g} witness={m.witness:g}" for m in mismatches[:10]]
         missing = sum(r.missing for r in group)

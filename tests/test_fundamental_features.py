@@ -7,6 +7,8 @@ the golden values are TSMC's actual Q1 2026 filing.
 """
 import datetime as dt
 import math
+import random
+import shutil
 
 import mongomock
 import numpy as np
@@ -18,6 +20,8 @@ from twlab.datasets import fundamental_features as ff
 from twlab.store.mongo import MongoStore
 from twlab.store.parquet import ParquetStore
 
+from twlab import witness
+from conftest import FakeSession, load_fixture
 from test_financial_statement import (
     ANNUAL_DEADLINE, ANNUAL_NOW, NOW, Q1_DEADLINE, TSMC_Q1_2026,
     annual_session, q1_session, seed_universe,
@@ -215,3 +219,53 @@ def test_tsmc_q1_2026_ratios_match_the_filing(real_api):
     assert at("ROE稅後") == pytest.approx(g["歸屬母公司淨利_損"] / equity.mean() * 100)
     # A year-ago quarter is not in the store, so growth is unknown — not zero.
     assert math.isnan(at("營收成長率"))
+
+
+# ── the external check: agreement with the Witness, not with our own inputs ──
+
+def finmind_session() -> FakeSession:
+    """FinMind's recorded answers for the same three companies and quarters,
+    keyed the way `FinMindClient` asks for them (one call per Stock ID)."""
+    recorded = load_fixture("finmind_financial_statements_20251201_20260430.json", "witness")
+    return FakeSession({f"data_id={sid}": payload for sid, payload in recorded.items()})
+
+
+def test_derived_ratios_agree_with_the_witness(real_store):
+    """twlab 13's acceptance criterion: the ratios must agree with an outside
+    calculation, not just with the inputs twlab itself parsed.
+
+    Every `fundamental_features` Probe is checked against FinMind's recording
+    of the same filings — EPS and 營業利益 read off their line items, 營業毛利率
+    and 營業利益率 recomputed from their 營業毛利/營業收入 and 營業利益/營業收入.
+    """
+    store = ParquetStore(real_store)
+    mongo = MongoStore(client=mongomock.MongoClient(), db_name="twlab_ff_witness")
+    client = witness.FinMindClient(finmind_session())
+
+    reports = witness.run_witness(store, mongo, client, now=dt.datetime(2026, 5, 16, 1, 0),
+                                  only=DS, samples=20, seed=7)
+
+    assert {r.field for r in reports} == {"每股稅後淨利", "營業毛利率", "營業利益率", "營業利益"}
+    for report in reports:
+        assert report.mismatches == [], report.summary()
+        assert report.checked - report.missing >= 3, report.summary()
+    assert mongo.runs(DS)[0]["status"] == "witness_ok"
+
+
+def test_the_witness_catches_a_ratio_that_drifts(real_store, tmp_path):
+    """The check has teeth: halving one published ratio must be reported.
+
+    On a copy of the store — the real one is shared by the whole module.
+    """
+    shutil.copytree(real_store, tmp_path / "store")
+    store = ParquetStore(tmp_path / "store")
+    client = witness.FinMindClient(finmind_session())
+    probe = next(p for p in witness.PROBES if p.dataset == DS and p.field == "營業毛利率")
+
+    assert witness.check(probe, store, client, samples=20, rng=random.Random(7)).mismatches == []
+
+    store.write_frames(DS, {"營業毛利率": store.read_frame(DS, "營業毛利率") / 2},
+                       now=dt.datetime(2026, 5, 16, 1, 0), frequency="quarterly")
+    drifted = witness.check(probe, store, client, samples=20, rng=random.Random(7))
+    assert drifted.mismatches, drifted.summary()
+    assert all(m.ours == pytest.approx(m.witness / 2) for m in drifted.mismatches)

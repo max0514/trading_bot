@@ -302,6 +302,33 @@ def test_full_run_materializes_deadline_indexed_frames(mongo, store_env):
     assert data.get("financial_statement:每股盈餘").loc["2026-05-15", "2317"] == 3.56
 
 
+def test_a_mops_outage_answering_no_data_for_most_companies_is_quarantined(mongo, store_env):
+    """The batch size follows the universe, so there is no absolute row floor to
+    catch this: if MOPS answers 「查無所需資料」 for all but one company, only the
+    share of the universe that answered says something is wrong."""
+    store = ParquetStore(store_env)
+    seed_universe(store)
+    nothing = "<html><body><div id='table01'><h4>查無所需資料！</h4></div></body></html>"
+    payloads = dict(pages_for("2330", 115, 1))
+    for sid in ("2317", "1101"):
+        payloads.update({request_for(name, sid, 115, 1): nothing for name in STMT})
+
+    result = pipeline.run(DS, Q1_DEADLINE, session=FakeSession(payloads), mongo=mongo,
+                          store=store, now=NOW)
+
+    assert result.status == "quarantined"
+    assert any("min_coverage" in f for f in result.failures)
+    assert result.rows == 1                       # 1 of the 3 companies asked about
+
+
+def test_a_quarter_every_company_answers_clears_the_coverage_floor(mongo, store_env):
+    store = ParquetStore(store_env)
+    seed_universe(store)
+    result = pipeline.run(DS, Q1_DEADLINE, session=q1_session(), mongo=mongo,
+                          store=store, now=NOW)
+    assert result.status == "ok" and result.rows == 3
+
+
 def test_rerun_is_idempotent(mongo, store):
     seed_universe(store)
     first = pipeline.run(DS, Q1_DEADLINE, session=q1_session(), mongo=mongo, store=store, now=NOW)
