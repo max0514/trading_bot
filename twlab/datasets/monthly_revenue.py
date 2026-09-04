@@ -25,7 +25,8 @@ import pandas as pd
 from twlab import qa
 from twlab.errors import ParseError
 from twlab.http import PoliteSession
-from twlab.spec import Cadence, DatasetSpec, align_monthly, previous_month
+from twlab.deadlines import align_monthly, previous_month
+from twlab.spec import Cadence, DatasetSpec
 
 # The legacy MOPS host: the redesigned mops.twse.com.tw no longer serves the
 # nas/t21 summaries (404) and WAF-blocks scripted clients; mopsov does neither.

@@ -20,7 +20,7 @@ import pandas as pd
 
 from twlab import registry
 from twlab.errors import DatasetNotMaterializedError
-from twlab.spec import quarter_due_on, quarter_end
+from twlab.deadlines import quarter_due_on, quarter_end
 from twlab.status import RunStatus
 from twlab.store.mongo import MongoStore
 from twlab.store.parquet import ParquetStore

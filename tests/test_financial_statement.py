@@ -20,7 +20,7 @@ from twlab import catalog, data, pipeline, registry
 from twlab.dataframe import FinlabDataFrame
 from twlab.datasets import financial_statement as fs
 from twlab.errors import ParseError
-from twlab.spec import align_quarterly
+from twlab.deadlines import align_quarterly
 from twlab.store.mongo import MongoStore
 from twlab.store.parquet import ParquetStore
 

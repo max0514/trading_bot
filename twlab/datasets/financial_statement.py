@@ -119,7 +119,8 @@ from lxml import html as lxml_html
 from twlab import qa
 from twlab.errors import ParseError
 from twlab.http import PoliteSession
-from twlab.spec import Cadence, DatasetSpec, align_quarterly, latest_quarter_due, quarter_end
+from twlab.deadlines import align_quarterly, latest_quarter_due, quarter_end
+from twlab.spec import Cadence, DatasetSpec
 
 # The legacy host: the ajax_t164sb* endpoints live on mopsov.twse.com.tw (the old
 # site moved there when the new mops.twse.com.tw launched; the new host WAF-blocks
