@@ -52,7 +52,9 @@ strategy runs with only its imports changed — see `examples/finlab_peg_strateg
 — and the legacy `backtest/data.py` loaders are a shim over twlab.
 
 Tests (`pip install -r requirements-dev.txt`, then `pytest`) run fully offline
-against recorded fixtures. Vocabulary in `CONTEXT.md`; decisions in `docs/adr/`.
+against recorded fixtures. Vocabulary in `CONTEXT.md`; decisions in `docs/adr/`;
+where coverage or a type differs from the Catalog on purpose,
+`docs/catalog-deviations.md`.
 
 ---
 

@@ -7,7 +7,9 @@ table whose rows are grouped by section-header rows spanning the table
 Equities — 股票, 特別股 and 創新板 — carry their 產業別 as the category, ETFs
 the constant "ETF", TDRs the constant "存託憑證" (4-digit TDRs trade in the
 same universe as stocks); warrants, ETNs and 受益證券 are skipped. Markets
-follow FinLab's convention: "sii" for 上市, "otc" for 上櫃.
+follow FinLab's convention: "sii" for 上市, "otc" for 上櫃. 興櫃 securities are
+on neither page and are out of scope — 2,373 rows against FinLab's 3,445; see
+docs/catalog-deviations.md.
 
 A static table: no date column, keyed on stock_id, cheap to re-scrape nightly
 and upserted idempotently. The batch `day` handed to fetch() is just the run
